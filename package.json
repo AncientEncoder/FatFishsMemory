@@ -1,0 +1,31 @@
+{
+  "name": "dsh-fatfish-memory",
+  "version": "0.0.1",
+  "description": "Human-like memory for DSH sessions: pressure-triggered compaction, on-disk archives, and cue-based recall.",
+  "type": "module",
+  "main": "src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "src/",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=22.19"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  },
+  "keywords": [
+    "deepseek-harness",
+    "dsh-plugin",
+    "memory",
+    "compaction"
+  ],
+  "license": "MIT"
+}
