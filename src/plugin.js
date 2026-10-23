@@ -1,11 +1,12 @@
 import os from 'node:os'
 import path from 'node:path'
-import { appendTurn, readIndex, writeIndex, readTurns, readProfile } from './store.js'
+import { appendTurn, readIndex, writeIndex, readTurns, readProfile, writeProfile } from './store.js'
 import { estimateTokens, pressureOf } from './pressure.js'
 import { makeCard } from './compact.js'
 import { isCompactionEvent, recordCompaction } from './compaction.js'
-import { renderProfileCard } from './profile.js'
+import { emptyProfile, renderProfileCard } from './profile.js'
 import { buildRecallMessage, spliceInbox } from './inject.js'
+import { createBreaker, ensureDataDir, probeWrite, writeWelcome } from './safety.js'
 
 export const name = 'dsh-fatfish-memory'
 export const inject = []
@@ -31,7 +32,6 @@ export function apply(ctx, config = {}) {
     dataDir: '',
     compactAt: 0.6,
     archiveTurns: true,
-    // Injection is off by default until it is verified against a live session.
     injectProfile: false,
     profileTarget: 'next-step',
     ...config,
@@ -43,6 +43,46 @@ export function apply(ctx, config = {}) {
   const logger = (() => {
     try { return ctx.logger?.('fatfish-memory') ?? console } catch { return console }
   })()
+
+  // ---- first-run safety net -------------------------------------------------
+  // A missing or unwritable data directory must degrade to read-only instead of
+  // throwing once per turn: someone installing this for the first time should
+  // get a working plugin, not a wall of errors.
+  const dirReady = ensureDataDir(root)
+  const writable = dirReady && probeWrite(root)
+  if (!dirReady) {
+    logger.error?.(`[fatfish-memory] 无法创建数据目录 ${root}，本次会话只读运行`)
+    cfg.archiveTurns = false
+  } else if (!writable) {
+    logger.error?.(`[fatfish-memory] 数据目录不可写 ${root}，已关闭归档，仅保留内存统计`)
+    cfg.archiveTurns = false
+  } else {
+    writeWelcome(root)
+    if (!readProfile(root)) {
+      try { writeProfile(root, emptyProfile()) } catch { /* 首次写入失败不致命 */ }
+    }
+  }
+
+  const breaker = createBreaker({
+    limit: 3,
+    onOpen: (error) => {
+      cfg.archiveTurns = false
+      logger.error?.('[fatfish-memory] 连续写入失败，已停止落盘（本次会话）：', error?.message ?? error)
+    },
+  })
+
+  /** 所有磁盘写入都走这里：失败只记一次，不刷屏。 */
+  function guarded(fn) {
+    if (breaker.open) return undefined
+    try {
+      const result = fn()
+      breaker.ok()
+      return result
+    } catch (error) {
+      breaker.fail(error)
+      return undefined
+    }
+  }
 
   const buffers = new Map()
   const state = new Map()
@@ -96,20 +136,18 @@ export function apply(ctx, config = {}) {
     s.index.compactedThrough = s.compactedThrough
     s.index.estimatedTokens = s.tokens
     s.index.lastTurn = s.turn
-    writeIndex(root, sessionId, s.index)
+    guarded(() => writeIndex(root, sessionId, s.index))
     logger.info?.(`[fatfish-memory] compacted turns ${card.from}-${card.to} -> "${card.title}"`)
     return card
   }
 
-  /** Once per session, put the profile card in front of the model. */
   function maybeInjectProfile(session, sessionId) {
     if (!cfg.injectProfile) return
     if (profileSeeded.has(sessionId)) return
     const profile = readProfile(root)
     const card = renderProfileCard(profile)
     if (!card) return
-    const message = buildRecallMessage(card)
-    const event = spliceInbox(session, message, { target: cfg.profileTarget })
+    const event = spliceInbox(session, buildRecallMessage(card), { target: cfg.profileTarget })
     if (event) {
       profileSeeded.add(sessionId)
       logger.info?.('[fatfish-memory] profile card injected')
@@ -121,9 +159,8 @@ export function apply(ctx, config = {}) {
       if (!event || typeof event.type !== 'string') return
       const sessionId = String(session?.header?.id ?? session?.id ?? 'unknown')
 
-      // Native compaction happened: keep a copy of what the runtime decided to drop.
       if (isCompactionEvent(event.type)) {
-        recordCompaction(root, sessionId, event)
+        guarded(() => recordCompaction(root, sessionId, event))
         return
       }
 
@@ -155,7 +192,7 @@ export function apply(ctx, config = {}) {
             user: buf.user,
             assistant: buf.assistant,
           }
-          if (cfg.archiveTurns) appendTurn(root, sessionId, turn)
+          if (cfg.archiveTurns) guarded(() => appendTurn(root, sessionId, turn))
 
           const s = stateOf(sessionId)
           s.turn = buf.turn
@@ -164,7 +201,7 @@ export function apply(ctx, config = {}) {
           s.index.createdAt = s.index.createdAt ?? new Date().toISOString()
           s.index.lastTurn = s.turn
           s.index.estimatedTokens = s.tokens
-          writeIndex(root, sessionId, s.index)
+          guarded(() => writeIndex(root, sessionId, s.index))
 
           maybeCompact(sessionId)
           buf.user = ''
@@ -187,5 +224,5 @@ export function apply(ctx, config = {}) {
     profileSeeded.clear()
   })
 
-  logger.info?.(`[fatfish-memory] archiving to ${root} (compactAt=${cfg.compactAt})`)
+  logger.info?.(`[fatfish-memory] archiving to ${root} (compactAt=${cfg.compactAt}, writable=${writable})`)
 }

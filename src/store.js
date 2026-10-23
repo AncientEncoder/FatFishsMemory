@@ -1,5 +1,6 @@
 import fs from 'node:fs'
 import path from 'node:path'
+import { safeReadJson } from './safety.js'
 
 export function sessionDir(root, sessionId) {
   const safe = String(sessionId).replace(/[^a-zA-Z0-9._-]/g, '_')
@@ -31,8 +32,10 @@ export function readTurns(root, sessionId) {
 
 export function readIndex(root, sessionId) {
   const file = path.join(sessionDir(root, sessionId), 'index.json')
-  if (!fs.existsSync(file)) return { entries: [] }
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return { entries: [] } }
+  const { value } = safeReadJson(file, { entries: [] })
+  if (!value || typeof value !== 'object') return { entries: [] }
+  if (!Array.isArray(value.entries)) value.entries = []
+  return value
 }
 
 export function writeIndex(root, sessionId, index) {
@@ -40,12 +43,12 @@ export function writeIndex(root, sessionId, index) {
   ensureDir(dir)
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(index, null, 2), 'utf8')
 }
+
 // ---- user profile (per installation, not per session) ----
 
 export function readProfile(root) {
-  const file = path.join(root, 'profile.json')
-  if (!fs.existsSync(file)) return null
-  try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return null }
+  const { value } = safeReadJson(path.join(root, 'profile.json'), null)
+  return value
 }
 
 export function writeProfile(root, profile) {
