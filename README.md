@@ -60,13 +60,19 @@ DSH 的上下文窗口是 1,048,576 tokens。装满了，最早的对话会被�
 
 ## 数据布局
 
+按**工作区**分组，同一目录下的会话放在一起：
+
 ```
 ~/.dsh/fatfish-memory/
-  profile.json        用户画像
-  <sessionId>/
-    turns.jsonl       每轮问答原文（只追加）
-    compactions.jsonl 原生压缩事件原样记录
-    index.json        记忆卡 + 压缩游标 compactedThrough
+  profile.json              用户画像（全局，不分工作区）
+  README.md                 首次运行时自动生成，说明这里存了什么
+  <workspace>/              工作区名 = 会话 cwd 的最后一段
+    <sessionId>/
+      turns.jsonl           每轮问答原文（只追加）
+      compactions.jsonl     原生压缩事件原样记录
+      index.json            记忆卡 + 压缩游标 + 所属工作区
+  _legacy/                  旧版平铺结构迁移后的存放地
+  _unknown/                 拿不到 cwd 的会话
 ```
 
 ## 数据目录可配
@@ -87,6 +93,7 @@ config:
 | 配了且可写 | 用它（转成绝对路径） |
 | 配了但不可用（权限、指向文件、盘满） | **回落到默认目录**，并在日志里警告一次 |
 | 默认目录也不可用 | 只读模式运行，不落盘 |
+| 换了目录且新目录是空的 | **自动把旧目录整体复制过去**（只复制，不删原数据） |
 
 不静默降级的原因：配置写错了却没人知道，比配置失败更糟。
 

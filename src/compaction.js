@@ -18,8 +18,8 @@ export function isCompactionEvent(type) {
   return COMPACTION_EVENTS.has(type)
 }
 
-export function recordCompaction(root, sessionId, event) {
-  const dir = sessionDir(root, sessionId)
+export function recordCompaction(root, sessionId, event, workspace) {
+  const dir = sessionDir(root, sessionId, workspace)
   ensureDir(dir)
   const line = JSON.stringify({
     type: event.type,
@@ -30,8 +30,8 @@ export function recordCompaction(root, sessionId, event) {
   fs.appendFileSync(path.join(dir, 'compactions.jsonl'), `${line}\n`, 'utf8')
 }
 
-export function readCompactions(root, sessionId) {
-  const file = path.join(sessionDir(root, sessionId), 'compactions.jsonl')
+export function readCompactions(root, sessionId, workspace) {
+  const file = path.join(sessionDir(root, sessionId, workspace), 'compactions.jsonl')
   if (!fs.existsSync(file)) return []
   return fs
     .readFileSync(file, 'utf8')

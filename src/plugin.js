@@ -1,12 +1,13 @@
 import os from 'node:os'
 import path from 'node:path'
-import { appendTurn, readIndex, writeIndex, readTurns, readProfile, writeProfile } from './store.js'
+import { appendTurn, readIndex, writeIndex, readTurns, readProfile, writeProfile, workspaceSlug } from './store.js'
 import { estimateTokens, pressureOf } from './pressure.js'
 import { makeCard } from './compact.js'
 import { isCompactionEvent, recordCompaction } from './compaction.js'
 import { emptyProfile, renderProfileCard } from './profile.js'
 import { buildRecallMessage, spliceInbox } from './inject.js'
 import { createBreaker, ensureDataDir, probeWrite, resolveDataDir, writeWelcome } from './safety.js'
+import { collectLegacySessions, migrateToNewDataDir } from './migrate.js'
 import { createLogger, resolveDebug } from './log.js'
 import { isRuntimeContext, messageText, turnNumber } from './message.js'
 
@@ -41,6 +42,12 @@ export function apply(ctx, config = {}) {
   const root = resolved.dir
   if (resolved.warning) log.warn(resolved.warning)
 
+  // 换了目录且新目录是空的 → 把旧目录整体复制过来（只复制，不删原数据）
+  if (resolved.source === 'config') {
+    const migration = migrateToNewDataDir({ from: defaultRoot, to: root })
+    if (migration.moved) log.warn(`已把旧数据从 ${migration.from} 复制到 ${migration.to}`)
+  }
+
   // ---- first-run safety net -------------------------------------------------
   // A missing or unwritable data directory must degrade to read-only instead of
   // throwing once per turn: someone installing this for the first time should
@@ -58,6 +65,8 @@ export function apply(ctx, config = {}) {
     if (!readProfile(root)) {
       try { writeProfile(root, emptyProfile()) } catch { /* 首次写入失败不致命 */ }
     }
+    const legacy = collectLegacySessions(root)
+    if (legacy > 0) log.warn(`已把 ${legacy} 个旧的平铺会话目录收进 _legacy/`)
   }
 
   const breaker = createBreaker({
@@ -84,6 +93,17 @@ export function apply(ctx, config = {}) {
   const buffers = new Map()
   const state = new Map()
   const profileSeeded = new Set()
+  const workspaces = new Map()
+
+  /** 会话所属工作区：取 cwd 的最后一段；拿不到就归到 _unknown。 */
+  function workspaceOf(session, sessionId) {
+    let ws = workspaces.get(sessionId)
+    if (!ws) {
+      ws = workspaceSlug(session?.header?.cwd ?? session?.cwd)
+      workspaces.set(sessionId, ws)
+    }
+    return ws
+  }
 
   function bufferOf(sessionId) {
     let buf = buffers.get(sessionId)
@@ -94,10 +114,10 @@ export function apply(ctx, config = {}) {
     return buf
   }
 
-  function stateOf(sessionId) {
+  function stateOf(sessionId, workspace) {
     let s = state.get(sessionId)
     if (!s) {
-      const index = readIndex(root, sessionId)
+      const index = readIndex(root, sessionId, workspace)
       s = {
         index,
         turn: index.lastTurn ?? 0,
@@ -109,13 +129,13 @@ export function apply(ctx, config = {}) {
     return s
   }
 
-  function maybeCompact(sessionId) {
-    const s = stateOf(sessionId)
+  function maybeCompact(sessionId, workspace) {
+    const s = stateOf(sessionId, workspace)
     s.index.entries = s.index.entries || []
     const pressure = pressureOf(s.tokens, s.index.window ?? DEFAULT_WINDOW)
     if (pressure < cfg.compactAt) return null
 
-    const turns = readTurns(root, sessionId)
+    const turns = readTurns(root, sessionId, workspace)
     const pending = turns.filter((t) => t.turn > s.compactedThrough)
     if (pending.length < MIN_TURNS_PER_CARD) return null
 
@@ -133,7 +153,7 @@ export function apply(ctx, config = {}) {
     s.index.compactedThrough = s.compactedThrough
     s.index.estimatedTokens = s.tokens
     s.index.lastTurn = s.turn
-    guarded(() => writeIndex(root, sessionId, s.index))
+    guarded(() => writeIndex(root, sessionId, s.index, workspace))
     log.info(`compacted turns ${card.from}-${card.to} -> "${card.title}"`)
     return card
   }
@@ -160,10 +180,11 @@ export function apply(ctx, config = {}) {
     try {
       if (!event || typeof event.type !== 'string') return
       const sessionId = String(session?.header?.id ?? session?.id ?? 'unknown')
-      log.debug(`event ${event.type} seq=${event.seq} session=${sessionId}`)
+      const workspace = workspaceOf(session, sessionId)
+      log.debug(`event ${event.type} seq=${event.seq} session=${sessionId} ws=${workspace}`)
 
       if (isCompactionEvent(event.type)) {
-        guarded(() => recordCompaction(root, sessionId, event))
+        guarded(() => recordCompaction(root, sessionId, event, workspace))
         log.info(`recorded ${event.type}`)
         return
       }
@@ -202,23 +223,25 @@ export function apply(ctx, config = {}) {
             user: buf.user,
             assistant: buf.assistant,
           }
-          if (cfg.archiveTurns) guarded(() => appendTurn(root, sessionId, turn))
+          if (cfg.archiveTurns) guarded(() => appendTurn(root, sessionId, turn, workspace))
 
-          const s = stateOf(sessionId)
+          const s = stateOf(sessionId, workspace)
           s.turn = buf.turn
           s.tokens += estimateTokens(`${turn.user} ${turn.assistant}`)
           s.index.window = s.index.window ?? DEFAULT_WINDOW
           s.index.createdAt = s.index.createdAt ?? new Date().toISOString()
+          s.index.workspace = workspace
+          s.index.cwd = session?.header?.cwd ?? null
           s.index.lastTurn = s.turn
           s.index.estimatedTokens = s.tokens
-          guarded(() => writeIndex(root, sessionId, s.index))
+          guarded(() => writeIndex(root, sessionId, s.index, workspace))
 
           if (debug) {
             const pressure = pressureOf(s.tokens, s.index.window)
             log.debug(`turn ${s.turn} archived, tokens=${s.tokens}, pressure=${(pressure * 100).toFixed(1)}%`)
           }
 
-          maybeCompact(sessionId)
+          maybeCompact(sessionId, workspace)
           buf.user = ''
           buf.assistant = ''
           break

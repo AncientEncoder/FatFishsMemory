@@ -2,24 +2,42 @@ import fs from 'node:fs'
 import path from 'node:path'
 import { safeReadJson } from './safety.js'
 
-export function sessionDir(root, sessionId) {
-  const safe = String(sessionId).replace(/[^a-zA-Z0-9._-]/g, '_')
-  return path.join(root, safe)
+function sanitize(value) {
+  return String(value ?? '').replace(/[^a-zA-Z0-9._-]/g, '_') || '_'
+}
+
+/** 工作区名：取 cwd 的最后一段，做安全化处理。 */
+export function workspaceSlug(cwd) {
+  if (!cwd) return '_unknown'
+  const base = String(cwd).split(/[\\/]/u).filter(Boolean).pop() || '_unknown'
+  return sanitize(base)
+}
+
+/**
+ * 目录布局：
+ *   <root>/profile.json
+ *   <root>/<workspace>/<sessionId>/...
+ * workspace 省略时退回平铺（兼容旧布局）。
+ */
+export function sessionDir(root, sessionId, workspace) {
+  const safeId = sanitize(sessionId)
+  if (!workspace) return path.join(root, safeId)
+  return path.join(root, sanitize(workspace), safeId)
 }
 
 export function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true })
 }
 
-export function appendTurn(root, sessionId, turn) {
-  const dir = sessionDir(root, sessionId)
+export function appendTurn(root, sessionId, turn, workspace) {
+  const dir = sessionDir(root, sessionId, workspace)
   ensureDir(dir)
   const line = JSON.stringify(turn) + '\n'
   fs.appendFileSync(path.join(dir, 'turns.jsonl'), line, 'utf8')
 }
 
-export function readTurns(root, sessionId) {
-  const file = path.join(sessionDir(root, sessionId), 'turns.jsonl')
+export function readTurns(root, sessionId, workspace) {
+  const file = path.join(sessionDir(root, sessionId, workspace), 'turns.jsonl')
   if (!fs.existsSync(file)) return []
   return fs.readFileSync(file, 'utf8')
     .split('\n')
@@ -30,16 +48,16 @@ export function readTurns(root, sessionId) {
     .filter(Boolean)
 }
 
-export function readIndex(root, sessionId) {
-  const file = path.join(sessionDir(root, sessionId), 'index.json')
+export function readIndex(root, sessionId, workspace) {
+  const file = path.join(sessionDir(root, sessionId, workspace), 'index.json')
   const { value } = safeReadJson(file, { entries: [] })
   if (!value || typeof value !== 'object') return { entries: [] }
   if (!Array.isArray(value.entries)) value.entries = []
   return value
 }
 
-export function writeIndex(root, sessionId, index) {
-  const dir = sessionDir(root, sessionId)
+export function writeIndex(root, sessionId, index, workspace) {
+  const dir = sessionDir(root, sessionId, workspace)
   ensureDir(dir)
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(index, null, 2), 'utf8')
 }
