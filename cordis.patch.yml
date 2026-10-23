@@ -1,3 +1,23 @@
-# FatFishsMemory
-
-（这一段历史文档已清理）
+- insert:
+    - id: fatfish-memory
+      name: dsh-fatfish-memory
+      config:
+        enabled: true
+        # 数据目录：留空 = ~/.dsh/fatfish-memory
+        # 支持绝对路径或 ~/xxx；配了但不可用会回落到默认目录并警告
+        dataDir: ""
+        # 上下文压力超过这个比例就开始压缩（0-1）
+        compactAt: 0.6
+        # 攒够多少轮才折成一张记忆卡（太小会把对话切得太碎）
+        minTurnsPerCard: 6
+        # 是否把每轮原文追加到磁盘
+        archiveTurns: true
+        # 记忆目录：会话开始时把最近的卡片标题作为 system 消息注入
+        # 这是「知道自己有什么」的那一路，比被动检索更能提升命中率
+        hotMemory: true
+        # 目录里最多列几条
+        hotMemoryEntries: 8
+        # 换 dataDir 时是否自动从旧目录复制数据
+        migrate: true
+        # 调试日志：日常/发布保持 false，排查时改 true
+        debug: false
