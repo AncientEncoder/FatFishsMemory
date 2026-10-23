@@ -10,6 +10,7 @@ import { collectLegacySessions, migrateToNewDataDir } from './migrate.js'
 import { createLogger, resolveDebug } from './log.js'
 import { isRuntimeContext, messageText, turnNumber } from './message.js'
 import { buildCatalog, buildCatalogMessage } from './hotmemory.js'
+import { findBoundary } from './boundary.js'
 
 const DEFAULT_WINDOW = 1048576
 
@@ -227,13 +228,16 @@ export function apply(ctx, config = {}) {
     const pending = turns.filter((t) => t.turn > s.compactedThrough)
     if (pending.length < cfg.minTurnsPerCard) return null
 
-    const cut = Math.floor(pending.length / 2)
-    const slice = pending.slice(0, cut)
+    const boundary = findBoundary(pending, { minTurns: cfg.minTurnsPerCard })
+    const slice = pending.slice(0, boundary.index)
     // 用切片里真实的轮次号，不要用游标+1——跨重启时游标和轮次号是两套计数
     const card = makeCard(slice, {
       from: slice[0].turn,
       to: slice[slice.length - 1].turn,
     })
+    // 记下是怎么切的：detected（找到任务边界）/ fallback（没找到，对半切）
+    card.cut = boundary.reason
+    card.cutScore = Number(boundary.score.toFixed(2))
     s.index.entries.push(card)
     s.compactedThrough = card.to
     s.tokens = turns
