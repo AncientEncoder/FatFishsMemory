@@ -7,12 +7,15 @@
         # 支持绝对路径或 ~/xxx；配了但不可用会回落到默认目录并警告
         dataDir: ""
         # 上下文压力超过这个比例就开始压缩（0-1）
-        compactAt: 0.6
+        # [TEST] 临时调到极小，只为逼出压缩卡片；测完改回 0.6
+        compactAt: 0.00002
         # 是否把每轮原文追加到磁盘
         archiveTurns: true
         # 是否在一轮开始时注入用户画像（默认关闭，等实测）
-        injectProfile: false
+        # [TEST] 临时打开验证注入
+        injectProfile: true
         # 注入到哪个队列：next-turn | next-step
         profileTarget: next-step
         # 调试日志：发布/日常使用保持 false，排查时改 true
-        debug: false
+        # [TEST] 临时打开
+        debug: true

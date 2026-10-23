@@ -15,13 +15,14 @@ export const name = 'dsh-fatfish-memory'
 export const inject = []
 
 const DEFAULT_WINDOW = 1048576
-const MIN_TURNS_PER_CARD = 6
 
 export function apply(ctx, config = {}) {
   const cfg = {
     enabled: true,
     dataDir: '',
     compactAt: 0.6,
+    // 攒够多少轮才折成一张记忆卡（太小会把对话切得太碎）
+    minTurnsPerCard: 6,
     archiveTurns: true,
     injectProfile: false,
     profileTarget: 'next-step',
@@ -137,7 +138,7 @@ export function apply(ctx, config = {}) {
 
     const turns = readTurns(root, sessionId, workspace)
     const pending = turns.filter((t) => t.turn > s.compactedThrough)
-    if (pending.length < MIN_TURNS_PER_CARD) return null
+    if (pending.length < cfg.minTurnsPerCard) return null
 
     const cut = Math.floor(pending.length / 2)
     const slice = pending.slice(0, cut)
