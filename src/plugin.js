@@ -33,7 +33,6 @@ export function apply(ctx, config = {}) {
   if (cfg.enabled === false) return
 
   const debug = resolveDebug(cfg.debug, process.env)
-  const log = createLogger({ debug, prefix: '[fatfish-memory]' })
 
   const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
   const defaultRoot = path.join(dshHome, 'fatfish-memory')
@@ -41,6 +40,14 @@ export function apply(ctx, config = {}) {
   // 数据目录可配：没配走默认；配了但不可用就回落并警告，绝不静默降级
   const resolved = resolveDataDir({ configured: cfg.dataDir, fallback: defaultRoot })
   const root = resolved.dir
+
+  // debug 模式下同时写文件：事后能查"注入到底有没有发生"
+  ensureDataDir(root)
+  const log = createLogger({
+    debug,
+    prefix: '[fatfish-memory]',
+    file: debug ? path.join(root, 'debug.log') : null,
+  })
   if (resolved.warning) log.warn(resolved.warning)
 
   // 换了目录且新目录是空的 → 把旧目录整体复制过来（只复制，不删原数据）
@@ -142,8 +149,9 @@ export function apply(ctx, config = {}) {
 
     const cut = Math.floor(pending.length / 2)
     const slice = pending.slice(0, cut)
+    // 用切片里真实的轮次号，不要用游标+1——跨重启时游标和轮次号是两套计数
     const card = makeCard(slice, {
-      from: s.compactedThrough + 1,
+      from: slice[0].turn,
       to: slice[slice.length - 1].turn,
     })
     s.index.entries.push(card)
