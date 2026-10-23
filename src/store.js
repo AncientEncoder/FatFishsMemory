@@ -40,3 +40,16 @@ export function writeIndex(root, sessionId, index) {
   ensureDir(dir)
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(index, null, 2), 'utf8')
 }
+// ---- user profile (per installation, not per session) ----
+
+export function readProfile(root) {
+  const file = path.join(root, 'profile.json')
+  if (!fs.existsSync(file)) return null
+  try { return JSON.parse(fs.readFileSync(file, 'utf8')) } catch { return null }
+}
+
+export function writeProfile(root, profile) {
+  ensureDir(root)
+  fs.writeFileSync(path.join(root, 'profile.json'), JSON.stringify(profile, null, 2), 'utf8')
+  return profile
+}

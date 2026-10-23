@@ -1,8 +1,11 @@
 import os from 'node:os'
 import path from 'node:path'
-import { appendTurn, readIndex, writeIndex, readTurns } from './store.js'
+import { appendTurn, readIndex, writeIndex, readTurns, readProfile } from './store.js'
 import { estimateTokens, pressureOf } from './pressure.js'
 import { makeCard } from './compact.js'
+import { isCompactionEvent, recordCompaction } from './compaction.js'
+import { renderProfileCard } from './profile.js'
+import { buildRecallMessage, spliceInbox } from './inject.js'
 
 export const name = 'dsh-fatfish-memory'
 export const inject = []
@@ -28,6 +31,9 @@ export function apply(ctx, config = {}) {
     dataDir: '',
     compactAt: 0.6,
     archiveTurns: true,
+    // Injection is off by default until it is verified against a live session.
+    injectProfile: false,
+    profileTarget: 'next-step',
     ...config,
   }
   if (cfg.enabled === false) return
@@ -40,6 +46,7 @@ export function apply(ctx, config = {}) {
 
   const buffers = new Map()
   const state = new Map()
+  const profileSeeded = new Set()
 
   function bufferOf(sessionId) {
     let buf = buffers.get(sessionId)
@@ -65,7 +72,6 @@ export function apply(ctx, config = {}) {
     return s
   }
 
-  /** Fold the uncompacted prefix of turns into cards once pressure crosses the line. */
   function maybeCompact(sessionId) {
     const s = stateOf(sessionId)
     s.index.entries = s.index.entries || []
@@ -95,16 +101,39 @@ export function apply(ctx, config = {}) {
     return card
   }
 
+  /** Once per session, put the profile card in front of the model. */
+  function maybeInjectProfile(session, sessionId) {
+    if (!cfg.injectProfile) return
+    if (profileSeeded.has(sessionId)) return
+    const profile = readProfile(root)
+    const card = renderProfileCard(profile)
+    if (!card) return
+    const message = buildRecallMessage(card)
+    const event = spliceInbox(session, message, { target: cfg.profileTarget })
+    if (event) {
+      profileSeeded.add(sessionId)
+      logger.info?.('[fatfish-memory] profile card injected')
+    }
+  }
+
   function onEvent(session, event) {
     try {
       if (!event || typeof event.type !== 'string') return
       const sessionId = String(session?.header?.id ?? session?.id ?? 'unknown')
+
+      // Native compaction happened: keep a copy of what the runtime decided to drop.
+      if (isCompactionEvent(event.type)) {
+        recordCompaction(root, sessionId, event)
+        return
+      }
+
       const buf = bufferOf(sessionId)
 
       switch (event.type) {
         case 'turn/start':
           buf.user = ''
           buf.assistant = ''
+          maybeInjectProfile(session, sessionId)
           break
         case 'user/message': {
           const text = extractText(event.data?.message)
@@ -155,6 +184,7 @@ export function apply(ctx, config = {}) {
     try { off?.() } catch { /* ignore */ }
     buffers.clear()
     state.clear()
+    profileSeeded.clear()
   })
 
   logger.info?.(`[fatfish-memory] archiving to ${root} (compactAt=${cfg.compactAt})`)
