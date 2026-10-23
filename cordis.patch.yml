@@ -1,0 +1,15 @@
+- insert:
+    - id: fatfish-memory
+      name: dsh-fatfish-memory
+      config:
+        enabled: true
+        # 留空则用 ~/.dsh/fatfish-memory
+        dataDir: ""
+        # 上下文压力超过这个比例就开始压缩（0-1）
+        compactAt: 0.6
+        # 是否把每轮原文追加到磁盘
+        archiveTurns: true
+        # 是否在一轮开始时注入用户画像（默认关闭，等实测）
+        injectProfile: false
+        # 注入到哪个队列：next-turn | next-step
+        profileTarget: next-step
