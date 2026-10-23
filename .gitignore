@@ -218,3 +218,14 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# ---- 本地记忆数据：绝不入库 ----
+# 画像、对话原文都是私人的，默认落在 ~/.dsh/fatfish-memory；
+# 万一有人把 dataDir 指到仓库里，这层兜底也拦住。
+profile.json
+profile.md
+turns.jsonl
+compactions.jsonl
+index.json
+fatfish-memory-data/
+*.local.json
