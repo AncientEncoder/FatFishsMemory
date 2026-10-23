@@ -74,3 +74,9 @@ export function writeProfile(root, profile) {
   fs.writeFileSync(path.join(root, 'profile.json'), JSON.stringify(profile, null, 2), 'utf8')
   return profile
 }
+
+/** 人类可读 + agent 可读的画像视图，替代原来的 splice 注入。 */
+export function writeProfileMarkdown(root, markdown) {
+  ensureDir(root)
+  fs.writeFileSync(path.join(root, 'profile.md'), markdown, 'utf8')
+}

@@ -1,11 +1,10 @@
 import os from 'node:os'
 import path from 'node:path'
-import { appendTurn, readIndex, writeIndex, readTurns, readProfile, writeProfile, workspaceSlug } from './store.js'
+import { appendTurn, readIndex, writeIndex, readTurns, readProfile, writeProfile, writeProfileMarkdown, workspaceSlug } from './store.js'
 import { estimateTokens, pressureOf } from './pressure.js'
 import { makeCard } from './compact.js'
 import { isCompactionEvent, recordCompaction } from './compaction.js'
-import { emptyProfile, renderProfileCard } from './profile.js'
-import { buildRecallMessage, spliceInbox } from './inject.js'
+import { emptyProfile, renderProfileCard, renderProfileMarkdown } from './profile.js'
 import { createBreaker, ensureDataDir, probeWrite, resolveDataDir, writeWelcome } from './safety.js'
 import { collectLegacySessions, migrateToNewDataDir } from './migrate.js'
 import { createLogger, resolveDebug } from './log.js'
@@ -16,12 +15,6 @@ export const inject = []
 
 const DEFAULT_WINDOW = 1048576
 
-/** 把回调推到当前任务之后执行（用于绕开 append 的重入保护）。 */
-function defer(fn) {
-  if (typeof queueMicrotask === 'function') queueMicrotask(fn)
-  else setTimeout(fn, 0)
-}
-
 export function apply(ctx, config = {}) {
   const cfg = {
     enabled: true,
@@ -30,8 +23,6 @@ export function apply(ctx, config = {}) {
     // 攒够多少轮才折成一张记忆卡（太小会把对话切得太碎）
     minTurnsPerCard: 6,
     archiveTurns: true,
-    injectProfile: false,
-    profileTarget: 'next-step',
     // 默认关闭：正常安装保持安静，发布时也保持这个值
     debug: false,
     ...config,
@@ -76,8 +67,15 @@ export function apply(ctx, config = {}) {
     cfg.archiveTurns = false
   } else {
     writeWelcome(root)
-    if (!readProfile(root)) {
-      try { writeProfile(root, emptyProfile()) } catch { /* 首次写入失败不致命 */ }
+    let profile = readProfile(root)
+    if (!profile) {
+      try {
+        profile = writeProfile(root, emptyProfile())
+      } catch { /* 首次写入失败不致命 */ }
+    }
+    // 画像落盘成 markdown：人和 agent 都能直接读，取代原来的 splice 注入
+    if (profile) {
+      try { writeProfileMarkdown(root, renderProfileMarkdown(profile)) } catch { /* ignore */ }
     }
     const legacy = collectLegacySessions(root)
     if (legacy > 0) log.warn(`已把 ${legacy} 个旧的平铺会话目录收进 _legacy/`)
@@ -106,7 +104,6 @@ export function apply(ctx, config = {}) {
 
   const buffers = new Map()
   const state = new Map()
-  const profileSeeded = new Set()
   const workspaces = new Map()
 
   /** 会话所属工作区：取 cwd 的最后一段；拿不到就归到 _unknown。 */
@@ -173,31 +170,15 @@ export function apply(ctx, config = {}) {
     return card
   }
 
-  function maybeInjectProfile(session, sessionId) {
-    if (!cfg.injectProfile) return
-    if (profileSeeded.has(sessionId)) return
-    const profile = readProfile(root)
-    const card = renderProfileCard(profile)
-    if (!card) {
-      log.debug('profile empty, skip injection')
-      return
-    }
-    // 运行时禁止在 append 的发布过程中再次 append（reentrancy guard），
-    // 而这个回调正好在发布里。推迟到当前任务结束后再注入。
-    profileSeeded.add(sessionId)
-    defer(() => {
-      try {
-        const event = spliceInbox(session, buildRecallMessage(card), { target: cfg.profileTarget })
-        if (event) {
-          log.info(`profile card injected into ${cfg.profileTarget} (${card.length} chars)`)
-        } else {
-          log.warn('session.append() unavailable, profile injection skipped')
-        }
-      } catch (error) {
-        log.error('injection threw:', error?.stack ?? error?.message ?? String(error))
-      }
-    })
-  }
+  // 记忆注入已下线。
+  //
+  // 曾经用 session.append('agent/inbox/spliced', ...) 把画像塞进下一轮，
+  // 但运行时会给消息打上 source.kind = "plugin:<name>"，这条消息会进入
+  // 会话事件流。一旦客户端渲染不了这种来源，整个对话区就会白屏——
+  // 一条消息能毁掉一个会话，风险不对称。
+  //
+  // 现在改为：画像落盘（profile.md），由 agent 在需要时主动读取。
+  // 文件坏了顶多读不到，不会破坏任何东西。
 
   function onEvent(session, event) {
     try {
@@ -219,7 +200,6 @@ export function apply(ctx, config = {}) {
           buf.user = ''
           buf.assistant = ''
           buf.turn = turnNumber(event.data, buf.turn + 1)
-          maybeInjectProfile(session, sessionId)
           break
         case 'user/message': {
           // 时间/工作区这类 runtime-context 注入不是人说的话，跳过
@@ -282,7 +262,6 @@ export function apply(ctx, config = {}) {
     try { off?.() } catch { /* ignore */ }
     buffers.clear()
     state.clear()
-    profileSeeded.clear()
   })
 
   // 启动横幅也受 debug 控制：正常安装不打扰

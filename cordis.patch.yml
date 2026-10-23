@@ -7,17 +7,16 @@
         # 支持绝对路径或 ~/xxx；配了但不可用会回落到默认目录并警告
         dataDir: ""
         # 上下文压力超过这个比例就开始压缩（0-1）
-        # [TEST] 临时调到极小，只为逼出压缩卡片；测完改回 0.6
-        compactAt: 0.00002
-        # [TEST] 攒 2 轮就折一张卡
-        minTurnsPerCard: 2
+        compactAt: 0.6
+        # 攒够多少轮才折成一张记忆卡（太小会把对话切得太碎）
+        minTurnsPerCard: 6
         # 是否把每轮原文追加到磁盘
         archiveTurns: true
-        # 是否在一轮开始时注入用户画像（默认关闭，等实测）
-        # [TEST] 临时打开验证注入
-        injectProfile: true
-        # 注入到哪个队列：next-turn | next-step
+        # 是否注入用户画像
+        # 已停用：splice 会往对话流里塞 plugin:* 消息，客户端渲染有风险。
+        # 改用「画像落盘 + 会话开始时主动读取」。
+        injectProfile: false
+        # 注入到哪个队列：next-turn | next-step（仅 injectProfile 开启时有效）
         profileTarget: next-step
         # 调试日志：发布/日常使用保持 false，排查时改 true
-        # [TEST] 临时打开
-        debug: true
+        debug: false
