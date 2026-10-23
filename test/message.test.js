@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { contentToText, messageText, turnNumber } from '../src/message.js'
+import { contentToText, isRuntimeContext, messageText, turnNumber } from '../src/message.js'
 
 test('plain text parts are joined', () => {
   const content = [
@@ -40,3 +40,13 @@ test('turnNumber prefers runtime turn', () => {
   assert.equal(turnNumber({}, 5), 5)
   assert.equal(turnNumber(undefined, 3), 3)
 })
+
+test('runtime-context injections are recognised', () => {
+  const ctx = { id: 'c1', role: 'user', source: { kind: 'runtime-context' }, content: [] }
+  assert.equal(isRuntimeContext(ctx), true)
+  const human = { id: 'u1', role: 'user', source: { kind: 'user' }, content: [] }
+  assert.equal(isRuntimeContext(human), false)
+  assert.equal(isRuntimeContext({ message: { source: { kind: 'runtime-context' } } }), true)
+  assert.equal(isRuntimeContext(null), false)
+})
+

@@ -8,7 +8,7 @@ import { emptyProfile, renderProfileCard } from './profile.js'
 import { buildRecallMessage, spliceInbox } from './inject.js'
 import { createBreaker, ensureDataDir, probeWrite, writeWelcome } from './safety.js'
 import { createLogger, resolveDebug } from './log.js'
-import { messageText, turnNumber } from './message.js'
+import { isRuntimeContext, messageText, turnNumber } from './message.js'
 
 export const name = 'dsh-fatfish-memory'
 export const inject = []
@@ -173,8 +173,13 @@ export function apply(ctx, config = {}) {
           maybeInjectProfile(session, sessionId)
           break
         case 'user/message': {
+          // 时间/工作区这类 runtime-context 注入不是人说的话，跳过
+          if (isRuntimeContext(event.data)) {
+            log.debug('skipped runtime-context message')
+            break
+          }
           const text = messageText(event.data)
-          if (text) buf.user = text
+          if (text) buf.user = buf.user ? `${buf.user}\n${text}` : text
           break
         }
         case 'assistant/message': {

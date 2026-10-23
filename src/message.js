@@ -35,3 +35,15 @@ export function turnNumber(data, fallback) {
   const value = data?.turn
   return Number.isInteger(value) && value >= 0 ? value : fallback
 }
+
+/**
+ * DSH 每轮都会注入一条 source.kind === 'runtime-context' 的 user/message
+ * （时间、时区、工作目录之类）。它不是人说的话，不能当成"用户输入"归档，
+ * 否则真正的提问会被它覆盖掉。
+ */
+export function isRuntimeContext(data) {
+  if (!data || typeof data !== 'object') return false
+  const source = data.source ?? data.message?.source
+  return source?.kind === 'runtime-context'
+}
+
