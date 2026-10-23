@@ -44,6 +44,13 @@ export function keywordsOf(text, limit = 8) {
 /**
  * Turn a slice of turns into one memory card.
  * Deliberately lossy: the card is an INDEX, the raw turns stay on disk.
+ *
+ * 结构化字段（v2）：
+ *   goal    这件事想解决什么（第一句用户输入）
+ *   actions 用了哪些工具（从 tool/call 事件累积）
+ *   outcome 最后落到哪（最后一条回答的首句）
+ *   files   涉及的文件路径
+ * 没有这些的时候，卡片就退化成"首句当标题"，至少不会更差。
  */
 export function makeCard(turns, { from = 0, to = 0, now = new Date() } = {}) {
   const list = Array.isArray(turns) ? turns : []
@@ -57,11 +64,39 @@ export function makeCard(turns, { from = 0, to = 0, now = new Date() } = {}) {
   const body = list.map((t) => `${t.user || ''} ${t.assistant || ''}`).join('\n')
   const date = new Date(now).toISOString().slice(0, 10)
 
+  const goal = firstUser.split('\n')[0].trim().slice(0, 80) || ''
+
+  // 工具调用：去重并统计次数，比如 pwsh×3、read×2
+  const toolCounts = new Map()
+  for (const turn of list) {
+    for (const name of turn.tools || []) {
+      toolCounts.set(name, (toolCounts.get(name) || 0) + 1)
+    }
+  }
+  const actions = [...toolCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([name, count]) => (count > 1 ? `${name}×${count}` : name))
+
+  const lastAssistant = [...list].reverse().find((t) => t.assistant)?.assistant || ''
+  const outcome = lastAssistant.split(/[\n。！？!?]/u)[0].trim().slice(0, 80) || ''
+
+  // 文件路径：够用就行，只认盘符路径和 ~/ 开头
+  const files = new Set()
+  for (const match of body.match(/[A-Za-z]:\\[^\s"'`<>|*?\n]+|~\/[^\s"'`<>|*?\n]+/gu) || []) {
+    if (match.length > 3 && !match.includes('\\\\')) files.add(match)
+    if (files.size >= 6) break
+  }
+
   return {
     date,
     from,
     to,
     title,
+    goal,
+    actions,
+    outcome,
+    files: [...files],
     points,
     keywords: keywordsOf(body),
     tokens: estimateTokens(body),

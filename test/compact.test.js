@@ -39,3 +39,31 @@ test('recall block renders a hint', () => {
   assert.ok(block.includes('[回忆]'))
   assert.ok(block.includes('服务器'))
 })
+
+test('card carries structured fields: goal, actions, outcome, files', () => {
+  const list = [
+    {
+      turn: 1,
+      user: '插件装不上，帮我看下',
+      assistant: '先看 profile 的 bundles',
+      tools: ['pwsh', 'pwsh', 'read'],
+    },
+    {
+      turn: 2,
+      user: '好了',
+      assistant: '装好了，路径是 D:\\Work\\Code\\FatFishsMemory',
+      tools: ['pwsh'],
+    },
+  ]
+  const card = makeCard(list, { from: 1, to: 2 })
+  assert.equal(card.goal, '插件装不上，帮我看下')
+  assert.deepEqual(card.actions, ['pwsh×3', 'read'])
+  assert.ok(card.outcome.startsWith('装好了'))
+  assert.ok(card.files.some((f) => f.includes('FatFishsMemory')))
+})
+
+test('card without tools degrades gracefully', () => {
+  const card = makeCard([{ turn: 1, user: '闲聊', assistant: '好啊' }], { from: 1, to: 1 })
+  assert.deepEqual(card.actions, [])
+  assert.deepEqual(card.files, [])
+})

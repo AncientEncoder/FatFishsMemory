@@ -38,7 +38,15 @@ test('message shape matches the runtime system/message format', () => {
   assert.equal(event, 'system/message')
   assert.equal(data.turn, 12)
   assert.equal(data.step, 1)
+  assert.ok(typeof data.message.id === 'string' && data.message.id.length > 0)
+  assert.deepEqual(data.message.source, { kind: 'system-prompt' })
   assert.equal(data.message.role, 'system')
   assert.equal(data.message.content[0].type, 'text')
   assert.equal(data.message.content[0].text, 'hello')
+})
+
+test('catalog message ids are unique', () => {
+  const a = buildCatalogMessage('a').data.message.id
+  const b = buildCatalogMessage('b').data.message.id
+  assert.notEqual(a, b)
 })

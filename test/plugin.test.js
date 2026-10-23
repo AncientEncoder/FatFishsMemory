@@ -6,7 +6,7 @@ import path from 'node:path'
 import { apply } from '../src/plugin.js'
 import { readTurns } from '../src/store.js'
 
-function harness(config = {}) {
+function harness(config = {}, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ffm-plugin-'))
   const handlers = new Map()
   const appends = []
@@ -19,13 +19,14 @@ function harness(config = {}) {
   const session = {
     header: { id: 'sess-1', cwd: 'C:\\ws\\proj' },
     append: (event, data, options) => { appends.push({ event, data, options }); return { event, data } },
+    ...overrides,
   }
   let seq = 0
   const emit = (type, data = {}) => {
     seq += 1
     handlers.get('session/event')(session, { type, seq, data })
   }
-  return { dir, emit, appends }
+  return { dir, emit, appends, session }
 }
 
 const userMsg = (text) => ({
@@ -95,24 +96,72 @@ test('catalog is injected as a system/message with a surfaceOp marker', async ()
   const { dir, emit, appends } = harness()
   seedIndex(dir, [{ date: '2026-10-23', from: 1, to: 1, title: '修服务器 SFTP', points: [], keywords: [] }])
 
-  emit('turn/start', { turn: 9 })
+  emit('step/start', { turn: 9, step: 1 })
+  emit('system/message', {
+    turn: 9,
+    step: 1,
+    message: { id: 'sp-1', role: 'system', source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'prompt' }] },
+  })
   await new Promise((resolve) => queueMicrotask(resolve))
 
   const injected = appends.find((a) => a.event === 'system/message')
   assert.ok(injected, 'should append a system/message')
   assert.deepEqual(injected.options, { surfaceOp: 'append' })
+  assert.equal(injected.data.turn, 9)
+  assert.equal(injected.data.step, 1)
+  assert.ok(typeof injected.data.message.id === 'string' && injected.data.message.id.length > 0)
+  assert.deepEqual(injected.data.message.source, { kind: 'system-prompt' })
   assert.equal(injected.data.message.role, 'system')
   assert.match(injected.data.message.content[0].text, /\[记忆目录\]/)
-  assert.equal(injected.data.turn, 9)
+})
+
+test('catalog is injected at step/start when a system prompt already exists', async () => {
+  const session = {
+    surface: { nodes: [0] },
+    eventAt: () => ({ type: 'system/message' }),
+  }
+  const { dir, emit, appends } = harness({}, session)
+  seedIndex(dir, [{ date: '2026-10-23', from: 1, to: 1, title: '旧记忆', points: [], keywords: [] }])
+
+  emit('step/start', { turn: 4, step: 1 })
+  await new Promise((resolve) => queueMicrotask(resolve))
+
+  const injected = appends.find((a) => a.event === 'system/message')
+  assert.ok(injected, 'should append a system/message')
+  assert.equal(injected.data.turn, 4)
+  assert.deepEqual(injected.data.message.source, { kind: 'system-prompt' })
+})
+
+test('catalog is not injected when the session already has a persisted catalog', async () => {
+  const session = {
+    surface: { nodes: [0, 1] },
+    eventAt: (seq) => seq === 1
+      ? { type: 'system/message', data: { message: { id: 'fatfish-catalog-old', content: [] } } }
+      : { type: 'system/message' },
+  }
+  const { dir, emit, appends } = harness({}, session)
+  seedIndex(dir, [{ date: '2026-10-23', from: 1, to: 1, title: '旧记忆', points: [], keywords: [] }])
+
+  emit('step/start', { turn: 2, step: 1 })
+  await new Promise((resolve) => queueMicrotask(resolve))
+
+  assert.equal(appends.filter((a) => a.event === 'system/message').length, 0)
 })
 
 test('catalog is not injected twice in one session', async () => {
   const { dir, emit, appends } = harness()
   seedIndex(dir, [{ date: '2026-10-23', from: 1, to: 1, title: '一件事', points: [], keywords: [] }])
 
-  emit('turn/start', { turn: 1 })
+  const prompt = (turn) => ({
+    turn,
+    step: 1,
+    message: { id: `sp-${turn}`, role: 'system', source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'prompt' }] },
+  })
+  emit('step/start', { turn: 1, step: 1 })
+  emit('system/message', prompt(1))
   await new Promise((resolve) => queueMicrotask(resolve))
-  emit('turn/start', { turn: 2 })
+  emit('step/start', { turn: 2, step: 1 })
+  emit('system/message', prompt(2))
   await new Promise((resolve) => queueMicrotask(resolve))
 
   assert.equal(appends.filter((a) => a.event === 'system/message').length, 1)
@@ -120,7 +169,27 @@ test('catalog is not injected twice in one session', async () => {
 
 test('no catalog is injected when there are no cards', async () => {
   const { emit, appends } = harness()
-  emit('turn/start', { turn: 3 })
+  emit('step/start', { turn: 3, step: 1 })
+  emit('system/message', {
+    turn: 3,
+    step: 1,
+    message: { id: 'sp-3', role: 'system', source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'prompt' }] },
+  })
   await new Promise((resolve) => queueMicrotask(resolve))
   assert.equal(appends.filter((a) => a.event === 'system/message').length, 0)
+})
+
+test('tool calls are recorded per turn for card actions', () => {
+  const { dir, emit } = harness()
+  emit('turn/start', { turn: 4 })
+  emit('user/message', userMsg('跑个命令再读个文件'))
+  emit('step/start', { turn: 4, step: 1 })
+  emit('tool/call', { turn: 4, step: 1, name: 'pwsh', callId: 'c1' })
+  emit('tool/call', { turn: 4, step: 2, name: 'read', callId: 'c2' })
+  emit('tool/call', { turn: 4, step: 3, name: 'pwsh', callId: 'c3' })
+  emit('assistant/message', assistantMsg(4, '完成'))
+  emit('turn/end', { turn: 4 })
+
+  const turns = readTurns(dir, 'sess-1', 'proj')
+  assert.deepEqual(turns[0].tools, ['pwsh', 'read'])
 })

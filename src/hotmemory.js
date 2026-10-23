@@ -8,6 +8,8 @@
  * 目标：不超过 200 token，宁短勿长——它每轮都要占着上下文。
  */
 
+import { randomUUID } from 'node:crypto'
+
 export function buildCatalog(cards, { maxEntries = 8, maxChars = 600 } = {}) {
   const list = (cards || []).filter(Boolean)
   if (list.length === 0) return ''
@@ -34,14 +36,18 @@ export function buildCatalog(cards, { maxEntries = 8, maxChars = 600 } = {}) {
 }
 
 /** 系统消息的形状，照抄 runtime 自己注册 system prompt 的那条。 */
-export function buildCatalogMessage(text, { turn = 0, step = 1 } = {}) {
+export function buildCatalogMessage(text, { turn = 0, step = 1, id = `fatfish-catalog-${randomUUID()}` } = {}) {
   return {
     event: 'system/message',
     data: {
       turn,
       step,
       message: {
+        id,
         role: 'system',
+        // system/message 的 source 必须归 system-prompt 所有；用 plugin:* 会被
+        // Session 校验拒绝（“message must have system-prompt source”）。
+        source: { kind: 'system-prompt' },
         content: [{ type: 'text', text }],
       },
     },

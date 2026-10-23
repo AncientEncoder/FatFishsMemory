@@ -126,9 +126,13 @@ export function apply(ctx, config = {}) {
    * 客户端有专门的处理路径；而 plugin:* 的 user 消息会污染对话流。
    * 每个会话只注入一次，避免每轮都占上下文。
    */
-  function maybeInjectCatalog(session, sessionId, workspace, turn) {
+  function maybeInjectCatalog(session, sessionId, workspace, turn, step = 1) {
     if (!cfg.hotMemory) return
     if (catalogInjected.has(sessionId)) return
+    if (hasCatalogMessage(session)) {
+      catalogInjected.add(sessionId)
+      return
+    }
     const s = stateOf(sessionId, workspace)
     const entries = s.index.entries || []
     const text = buildCatalog(entries, { maxEntries: cfg.hotMemoryEntries })
@@ -137,15 +141,46 @@ export function apply(ctx, config = {}) {
     catalogInjected.add(sessionId)
     defer(() => {
       try {
-        const { event, data } = buildCatalogMessage(text, { turn, step: 1 })
+        const { event, data } = buildCatalogMessage(text, { turn, step })
         // system/message 是 surface-eligible 事件，必须带 surfaceOp 标记，
-        // 否则 runtime 直接拒绝（错误信息里写得很清楚）。
+        // 且只能在 turn/step 已打开、且系统提示已经占住 surface head 时追加。
         session.append(event, data, { surfaceOp: 'append' })
         log.info(`catalog injected (${text.length} chars, ${entries.length} cards)`)
       } catch (error) {
         log.error('catalog injection failed:', error?.stack ?? error?.message ?? String(error))
       }
     })
+  }
+
+  /**
+   * surface 上是否已经有 system/message。
+   * 新会话的第一步里，runtime 会先追加主系统提示；在它之前追加 catalog
+   * 会抢占 protected surface head，导致后续系统提示替换错位。
+   */
+  function hasSystemPrompt(session) {
+    try {
+      const nodes = session?.surface?.nodes
+      if (!Array.isArray(nodes)) return false
+      return nodes.some((seq) => session.eventAt?.(seq)?.type === 'system/message')
+    } catch {
+      return false
+    }
+  }
+
+  /** 已落盘的 catalog 用 id 前缀识别，重启/resume 后不重复注入。 */
+  function hasCatalogMessage(session) {
+    try {
+      const nodes = session?.surface?.nodes
+      if (!Array.isArray(nodes)) return false
+      return nodes.some((seq) => {
+        const event = session.eventAt?.(seq)
+        if (event?.type !== 'system/message') return false
+        const id = event.data?.message?.id
+        return typeof id === 'string' && id.startsWith('fatfish-catalog-')
+      })
+    } catch {
+      return false
+    }
   }
 
   /** 会话所属工作区：取 cwd 的最后一段；拿不到就归到 _unknown。 */
@@ -161,7 +196,7 @@ export function apply(ctx, config = {}) {
   function bufferOf(sessionId) {
     let buf = buffers.get(sessionId)
     if (!buf) {
-      buf = { user: '', assistant: '', turn: 0 }
+      buf = { user: '', assistant: '', turn: 0, step: 1, tools: [] }
       buffers.set(sessionId, buf)
     }
     return buf
@@ -242,9 +277,35 @@ export function apply(ctx, config = {}) {
           // 注意：不要清 buf.user。新进程启动时排队的用户消息会先于 turn/start
           // 到达，这里清空会把真正的提问抹掉（曾经导致归档里 user 全空）。
           buf.assistant = ''
+          buf.tools = []
           buf.turn = turnNumber(event.data, buf.turn + 1)
-          maybeInjectCatalog(session, sessionId, workspace, buf.turn)
           break
+        case 'tool/call': {
+          // 记录这一轮用过哪些工具，用来生成卡片的 actions
+          const name = event.data?.name
+          if (typeof name === 'string' && name) buf.tools.push(name)
+          break
+        }
+        case 'step/start': {
+          // system/message 必须落在已打开的 turn/step 内；turn/start 时 step
+          // 还没开始，追加会被 “does not match an open turn and step” 拒绝。
+          // 新会话此时可能还没有主系统提示，先等 system/message 事件。
+          const turn = turnNumber(event.data, buf.turn)
+          const step = Number.isInteger(event.data?.step) && event.data.step > 0 ? event.data.step : 1
+          buf.turn = turn
+          buf.step = step
+          if (hasSystemPrompt(session)) maybeInjectCatalog(session, sessionId, workspace, turn, step)
+          break
+        }
+        case 'system/message': {
+          // 新会话的主系统提示在这里落盘；它成为 protected head 后再注入 catalog。
+          if (event.data?.message?.source?.kind === 'system-prompt') {
+            const turn = turnNumber(event.data, buf.turn)
+            const step = Number.isInteger(event.data?.step) && event.data.step > 0 ? event.data.step : 1
+            maybeInjectCatalog(session, sessionId, workspace, turn, step)
+          }
+          break
+        }
         case 'user/message': {
           // 时间/工作区这类 runtime-context 注入不是人说的话，跳过
           if (isRuntimeContext(event.data)) {
@@ -269,6 +330,7 @@ export function apply(ctx, config = {}) {
             ts: Date.now(),
             user: buf.user,
             assistant: buf.assistant,
+            tools: [...new Set(buf.tools)],
           }
           if (cfg.archiveTurns) guarded(() => appendTurn(root, sessionId, turn, workspace))
 

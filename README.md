@@ -44,7 +44,30 @@ DSH 的上下文窗口是 1,048,576 tokens。装满了，最早的对话会被�
 - [x] 数据目录可配、按工作区归类、迁移旧数据
 - [x] 首次运行保险机制（见下）
 - [x] 召回：关键词检索 + `recall.mjs` 命令行
+- [x] 记忆目录（hot memory）：会话开始时以 system 消息注入
+- [x] 结构化记忆卡：目标 / 动作 / 结果 / 涉及文件
 - [ ] 向量召回（替换关键词打分，接口不变）
+
+## 记忆卡长什么样
+
+```json
+{
+  "date": "2026-10-23",
+  "from": 118, "to": 124,
+  "title": "插件装不上，帮我看下",
+  "goal": "插件装不上，帮我看下",
+  "actions": ["pwsh×3", "read"],
+  "outcome": "装好了，路径是 D:\\Work\\Code\\FatFishsMemory",
+  "files": ["D:\\Work\\Code\\FatFishsMemory"],
+  "points": ["..."],
+  "keywords": ["插件", "重启", "白屏"],
+  "tokens": 412, "turns": 7
+}
+```
+
+`actions` 来自 `tool/call` 事件，`outcome` 取最后一条回答的首句，`files` 用路径正则扫。
+没有这些信息时卡片退化成"首句当标题"，不会更差。
+
 
 ## 怎么翻记忆
 
