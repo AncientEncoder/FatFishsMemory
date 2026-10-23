@@ -36,15 +36,17 @@ export function addFact(profile, section, text, { source = 'chat', now = new Dat
 }
 
 /** Render the card that gets injected into the next request. Keep it small. */
-export function renderProfileCard(profile, { maxChars = 400 } = {}) {
+export function renderProfileCard(profile, { maxChars = 600 } = {}) {
   if (!profile || !profile.sections) return ''
   const lines = ['[用户画像] 你对这个人已知：']
   for (const name of SECTIONS) {
     const items = profile.sections[name] || []
     if (items.length === 0) continue
-    const text = items
-      .slice(-4)
-      .map((item) => item.text)
+    // Keep the earliest fact (usually the stable one: who they are) plus the
+    // newest few (what changed recently). Dropping the head loses identity.
+    const picked = items.length <= 4 ? items : [items[0], ...items.slice(-3)]
+    const text = picked
+      .map((item) => (item.text.length > 40 ? `${item.text.slice(0, 40)}…` : item.text))
       .join('；')
     lines.push(`- ${SECTION_LABELS[name]}：${text}`)
   }
