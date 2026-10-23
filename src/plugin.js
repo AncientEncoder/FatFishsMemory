@@ -16,6 +16,12 @@ export const inject = []
 
 const DEFAULT_WINDOW = 1048576
 
+/** 把回调推到当前任务之后执行（用于绕开 append 的重入保护）。 */
+function defer(fn) {
+  if (typeof queueMicrotask === 'function') queueMicrotask(fn)
+  else setTimeout(fn, 0)
+}
+
 export function apply(ctx, config = {}) {
   const cfg = {
     enabled: true,
@@ -176,19 +182,21 @@ export function apply(ctx, config = {}) {
       log.debug('profile empty, skip injection')
       return
     }
-    let event = null
-    try {
-      event = spliceInbox(session, buildRecallMessage(card), { target: cfg.profileTarget })
-    } catch (error) {
-      log.error('injection threw:', error?.stack ?? error?.message ?? String(error))
-      return
-    }
-    if (event) {
-      profileSeeded.add(sessionId)
-      log.info(`profile card injected into ${cfg.profileTarget} (${card.length} chars)`)
-    } else {
-      log.warn('session.append() unavailable, profile injection skipped')
-    }
+    // 运行时禁止在 append 的发布过程中再次 append（reentrancy guard），
+    // 而这个回调正好在发布里。推迟到当前任务结束后再注入。
+    profileSeeded.add(sessionId)
+    defer(() => {
+      try {
+        const event = spliceInbox(session, buildRecallMessage(card), { target: cfg.profileTarget })
+        if (event) {
+          log.info(`profile card injected into ${cfg.profileTarget} (${card.length} chars)`)
+        } else {
+          log.warn('session.append() unavailable, profile injection skipped')
+        }
+      } catch (error) {
+        log.error('injection threw:', error?.stack ?? error?.message ?? String(error))
+      }
+    })
   }
 
   function onEvent(session, event) {
