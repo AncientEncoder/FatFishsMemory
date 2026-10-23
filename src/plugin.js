@@ -1,11 +1,14 @@
 import os from 'node:os'
 import path from 'node:path'
-import { appendTurn, readIndex, writeIndex } from './store.js'
+import { appendTurn, readIndex, writeIndex, readTurns } from './store.js'
+import { estimateTokens, pressureOf } from './pressure.js'
+import { makeCard } from './compact.js'
 
 export const name = 'dsh-fatfish-memory'
 export const inject = []
 
 const DEFAULT_WINDOW = 1048576
+const MIN_TURNS_PER_CARD = 6
 
 function extractText(message) {
   const content = message?.content
@@ -35,8 +38,8 @@ export function apply(ctx, config = {}) {
     try { return ctx.logger?.('fatfish-memory') ?? console } catch { return console }
   })()
 
-  // Per-session write buffers: turn text arrives in pieces.
   const buffers = new Map()
+  const state = new Map()
 
   function bufferOf(sessionId) {
     let buf = buffers.get(sessionId)
@@ -45,6 +48,51 @@ export function apply(ctx, config = {}) {
       buffers.set(sessionId, buf)
     }
     return buf
+  }
+
+  function stateOf(sessionId) {
+    let s = state.get(sessionId)
+    if (!s) {
+      const index = readIndex(root, sessionId)
+      s = {
+        index,
+        turn: index.lastTurn ?? 0,
+        compactedThrough: index.compactedThrough ?? 0,
+        tokens: index.estimatedTokens ?? 0,
+      }
+      state.set(sessionId, s)
+    }
+    return s
+  }
+
+  /** Fold the uncompacted prefix of turns into cards once pressure crosses the line. */
+  function maybeCompact(sessionId) {
+    const s = stateOf(sessionId)
+    s.index.entries = s.index.entries || []
+    const pressure = pressureOf(s.tokens, s.index.window ?? DEFAULT_WINDOW)
+    if (pressure < cfg.compactAt) return null
+
+    const turns = readTurns(root, sessionId)
+    const pending = turns.filter((t) => t.turn > s.compactedThrough)
+    if (pending.length < MIN_TURNS_PER_CARD) return null
+
+    const cut = Math.floor(pending.length / 2)
+    const slice = pending.slice(0, cut)
+    const card = makeCard(slice, {
+      from: s.compactedThrough + 1,
+      to: slice[slice.length - 1].turn,
+    })
+    s.index.entries.push(card)
+    s.compactedThrough = card.to
+    s.tokens = turns
+      .filter((t) => t.turn > s.compactedThrough)
+      .reduce((sum, t) => sum + estimateTokens(`${t.user} ${t.assistant}`), 0)
+    s.index.compactedThrough = s.compactedThrough
+    s.index.estimatedTokens = s.tokens
+    s.index.lastTurn = s.turn
+    writeIndex(root, sessionId, s.index)
+    logger.info?.(`[fatfish-memory] compacted turns ${card.from}-${card.to} -> "${card.title}"`)
+    return card
   }
 
   function onEvent(session, event) {
@@ -71,22 +119,25 @@ export function apply(ctx, config = {}) {
         case 'turn/end': {
           if (!buf.user && !buf.assistant) return
           buf.turn += 1
-          if (cfg.archiveTurns) {
-            appendTurn(root, sessionId, {
-              turn: buf.turn,
-              seq: event.seq,
-              ts: Date.now(),
-              user: buf.user,
-              assistant: buf.assistant,
-            })
+          const turn = {
+            turn: buf.turn,
+            seq: event.seq,
+            ts: Date.now(),
+            user: buf.user,
+            assistant: buf.assistant,
           }
-          // placeholder: compaction will hook here once pressure is known
-          const index = readIndex(root, sessionId)
-          if (!index.createdAt) {
-            index.createdAt = new Date().toISOString()
-            index.window = DEFAULT_WINDOW
-            writeIndex(root, sessionId, index)
-          }
+          if (cfg.archiveTurns) appendTurn(root, sessionId, turn)
+
+          const s = stateOf(sessionId)
+          s.turn = buf.turn
+          s.tokens += estimateTokens(`${turn.user} ${turn.assistant}`)
+          s.index.window = s.index.window ?? DEFAULT_WINDOW
+          s.index.createdAt = s.index.createdAt ?? new Date().toISOString()
+          s.index.lastTurn = s.turn
+          s.index.estimatedTokens = s.tokens
+          writeIndex(root, sessionId, s.index)
+
+          maybeCompact(sessionId)
           buf.user = ''
           buf.assistant = ''
           break
@@ -95,7 +146,6 @@ export function apply(ctx, config = {}) {
           break
       }
     } catch (error) {
-      // A memory bug must never take down the shared session bus.
       try { logger.error?.('[fatfish-memory] event handling failed', error) } catch { /* ignore */ }
     }
   }
@@ -104,6 +154,7 @@ export function apply(ctx, config = {}) {
   ctx.effect(() => () => {
     try { off?.() } catch { /* ignore */ }
     buffers.clear()
+    state.clear()
   })
 
   logger.info?.(`[fatfish-memory] archiving to ${root} (compactAt=${cfg.compactAt})`)
