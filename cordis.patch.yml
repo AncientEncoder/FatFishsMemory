@@ -13,3 +13,5 @@
         injectProfile: false
         # 注入到哪个队列：next-turn | next-step
         profileTarget: next-step
+        # 调试日志：发布/日常使用保持 false，排查时改 true
+        debug: false

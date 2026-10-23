@@ -75,12 +75,33 @@ DSH 的上下文窗口是 1,048,576 tokens。装满了，最早的对话会被�
 dsh plugin --profile desktop add file:D:\Work\Code\FatFishsMemory
 ```
 
+## 调试
+
+默认 **关**，正常使用和发布都保持 `debug: false`——这时只有 `error` / `warn` 会输出。
+
+排查问题时，两种打开方式：
+
+```yaml
+# ~/.dsh/profiles/desktop/node_modules/dsh-fatfish-memory/cordis.patch.yml
+config:
+  debug: true
+```
+
+```bash
+# 或者临时用环境变量，不用改文件（优先级更高）
+set DSH_FATFISH_DEBUG=1
+```
+
+打开后会打印：每个事件的类型和 seq、每轮归档后的 token 数与压力百分比、压缩触发、注入结果。
+
 ## 开发
 
 ```bash
 node test/store.test.js
 node test/compact.test.js
 node test/profile.test.js
+node test/safety.test.js
+node test/log.test.js
 ```
 
 沙箱里 `node --test` 会因 spawn 被拦，直接跑文件即可。

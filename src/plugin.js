@@ -7,6 +7,7 @@ import { isCompactionEvent, recordCompaction } from './compaction.js'
 import { emptyProfile, renderProfileCard } from './profile.js'
 import { buildRecallMessage, spliceInbox } from './inject.js'
 import { createBreaker, ensureDataDir, probeWrite, writeWelcome } from './safety.js'
+import { createLogger, resolveDebug } from './log.js'
 
 export const name = 'dsh-fatfish-memory'
 export const inject = []
@@ -34,15 +35,17 @@ export function apply(ctx, config = {}) {
     archiveTurns: true,
     injectProfile: false,
     profileTarget: 'next-step',
+    // 默认关闭：正常安装保持安静，发布时也保持这个值
+    debug: false,
     ...config,
   }
   if (cfg.enabled === false) return
 
+  const debug = resolveDebug(cfg.debug, process.env)
+  const log = createLogger({ debug, prefix: '[fatfish-memory]' })
+
   const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
   const root = cfg.dataDir || path.join(dshHome, 'fatfish-memory')
-  const logger = (() => {
-    try { return ctx.logger?.('fatfish-memory') ?? console } catch { return console }
-  })()
 
   // ---- first-run safety net -------------------------------------------------
   // A missing or unwritable data directory must degrade to read-only instead of
@@ -51,10 +54,10 @@ export function apply(ctx, config = {}) {
   const dirReady = ensureDataDir(root)
   const writable = dirReady && probeWrite(root)
   if (!dirReady) {
-    logger.error?.(`[fatfish-memory] 无法创建数据目录 ${root}，本次会话只读运行`)
+    log.error(`无法创建数据目录 ${root}，本次会话只读运行`)
     cfg.archiveTurns = false
   } else if (!writable) {
-    logger.error?.(`[fatfish-memory] 数据目录不可写 ${root}，已关闭归档，仅保留内存统计`)
+    log.error(`数据目录不可写 ${root}，已关闭归档，仅保留内存统计`)
     cfg.archiveTurns = false
   } else {
     writeWelcome(root)
@@ -67,7 +70,7 @@ export function apply(ctx, config = {}) {
     limit: 3,
     onOpen: (error) => {
       cfg.archiveTurns = false
-      logger.error?.('[fatfish-memory] 连续写入失败，已停止落盘（本次会话）：', error?.message ?? error)
+      log.error('连续写入失败，已停止落盘（本次会话）：', error?.message ?? error)
     },
   })
 
@@ -137,7 +140,7 @@ export function apply(ctx, config = {}) {
     s.index.estimatedTokens = s.tokens
     s.index.lastTurn = s.turn
     guarded(() => writeIndex(root, sessionId, s.index))
-    logger.info?.(`[fatfish-memory] compacted turns ${card.from}-${card.to} -> "${card.title}"`)
+    log.info(`compacted turns ${card.from}-${card.to} -> "${card.title}"`)
     return card
   }
 
@@ -146,11 +149,16 @@ export function apply(ctx, config = {}) {
     if (profileSeeded.has(sessionId)) return
     const profile = readProfile(root)
     const card = renderProfileCard(profile)
-    if (!card) return
+    if (!card) {
+      log.debug('profile empty, skip injection')
+      return
+    }
     const event = spliceInbox(session, buildRecallMessage(card), { target: cfg.profileTarget })
     if (event) {
       profileSeeded.add(sessionId)
-      logger.info?.('[fatfish-memory] profile card injected')
+      log.info(`profile card injected into ${cfg.profileTarget} (${card.length} chars)`)
+    } else {
+      log.warn('session.append() unavailable, profile injection skipped')
     }
   }
 
@@ -158,9 +166,11 @@ export function apply(ctx, config = {}) {
     try {
       if (!event || typeof event.type !== 'string') return
       const sessionId = String(session?.header?.id ?? session?.id ?? 'unknown')
+      log.debug(`event ${event.type} seq=${event.seq} session=${sessionId}`)
 
       if (isCompactionEvent(event.type)) {
         guarded(() => recordCompaction(root, sessionId, event))
+        log.info(`recorded ${event.type}`)
         return
       }
 
@@ -203,6 +213,11 @@ export function apply(ctx, config = {}) {
           s.index.estimatedTokens = s.tokens
           guarded(() => writeIndex(root, sessionId, s.index))
 
+          if (debug) {
+            const pressure = pressureOf(s.tokens, s.index.window)
+            log.debug(`turn ${s.turn} archived, tokens=${s.tokens}, pressure=${(pressure * 100).toFixed(1)}%`)
+          }
+
           maybeCompact(sessionId)
           buf.user = ''
           buf.assistant = ''
@@ -212,7 +227,7 @@ export function apply(ctx, config = {}) {
           break
       }
     } catch (error) {
-      try { logger.error?.('[fatfish-memory] event handling failed', error) } catch { /* ignore */ }
+      log.error('event handling failed', error)
     }
   }
 
@@ -224,5 +239,6 @@ export function apply(ctx, config = {}) {
     profileSeeded.clear()
   })
 
-  logger.info?.(`[fatfish-memory] archiving to ${root} (compactAt=${cfg.compactAt}, writable=${writable})`)
+  // 启动横幅也受 debug 控制：正常安装不打扰
+  log.info(`archiving to ${root} (compactAt=${cfg.compactAt}, writable=${writable}, debug=${debug})`)
 }
