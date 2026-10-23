@@ -176,7 +176,13 @@ export function apply(ctx, config = {}) {
       log.debug('profile empty, skip injection')
       return
     }
-    const event = spliceInbox(session, buildRecallMessage(card), { target: cfg.profileTarget })
+    let event = null
+    try {
+      event = spliceInbox(session, buildRecallMessage(card), { target: cfg.profileTarget })
+    } catch (error) {
+      log.error('injection threw:', error?.stack ?? error?.message ?? String(error))
+      return
+    }
     if (event) {
       profileSeeded.add(sessionId)
       log.info(`profile card injected into ${cfg.profileTarget} (${card.length} chars)`)
@@ -259,7 +265,7 @@ export function apply(ctx, config = {}) {
           break
       }
     } catch (error) {
-      log.error('event handling failed', error)
+      log.error('event handling failed:', error?.stack ?? error?.message ?? String(error))
     }
   }
 

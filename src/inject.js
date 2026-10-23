@@ -19,12 +19,30 @@ export function buildRecallMessage(text, { id = nextMessageId('fatfish-recall') 
 }
 
 /**
+ * 读当前待发队列。
+ * `session.inbox` 可能是函数，也可能是对象——直接 `inbox?.()` 对对象会抛
+ * TypeError，这一行曾经让整个注入静默失败。
+ */
+export function readInbox(session) {
+  if (!session) return null
+  const inbox = session.inbox
+  if (typeof inbox === 'function') {
+    try {
+      return inbox()
+    } catch {
+      return null
+    }
+  }
+  return inbox && typeof inbox === 'object' ? inbox : null
+}
+
+/**
  * Push one message into a session's pending queue.
  * Returns the created event, or null when the session does not expose append().
  */
 export function spliceInbox(session, message, { target = 'next-turn', index } = {}) {
   if (!session || typeof session.append !== 'function') return null
-  const inbox = session.inbox?.() ?? session.inbox ?? null
+  const inbox = readInbox(session)
   const list = Array.isArray(inbox?.[target]) ? inbox[target] : []
   const start = Number.isInteger(index) ? index : list.length
   return session.append('agent/inbox/spliced', {
