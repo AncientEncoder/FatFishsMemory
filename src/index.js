@@ -17,5 +17,11 @@ try {
 export const name = plugin.name
 export const inject = plugin.inject
 export function apply(ctx, config = {}) {
-  return plugin.apply(ctx, config)
+  try {
+    return plugin.apply(ctx, config)
+  } catch (error) {
+    const detail = error instanceof Error ? error.stack ?? error.message : String(error)
+    console.error(`[fatfish-memory] apply() 失败，已跳过本次挂载（不影响其他插件）。\n${detail}`)
+    return undefined
+  }
 }
