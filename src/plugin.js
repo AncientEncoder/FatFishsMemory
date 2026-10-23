@@ -8,24 +8,13 @@ import { emptyProfile, renderProfileCard } from './profile.js'
 import { buildRecallMessage, spliceInbox } from './inject.js'
 import { createBreaker, ensureDataDir, probeWrite, writeWelcome } from './safety.js'
 import { createLogger, resolveDebug } from './log.js'
+import { messageText, turnNumber } from './message.js'
 
 export const name = 'dsh-fatfish-memory'
 export const inject = []
 
 const DEFAULT_WINDOW = 1048576
 const MIN_TURNS_PER_CARD = 6
-
-function extractText(message) {
-  const content = message?.content
-  if (typeof content === 'string') return content
-  if (Array.isArray(content)) {
-    return content
-      .map((part) => (typeof part === 'string' ? part : (part?.text ?? '')))
-      .filter(Boolean)
-      .join('')
-  }
-  return ''
-}
 
 export function apply(ctx, config = {}) {
   const cfg = {
@@ -180,21 +169,22 @@ export function apply(ctx, config = {}) {
         case 'turn/start':
           buf.user = ''
           buf.assistant = ''
+          buf.turn = turnNumber(event.data, buf.turn + 1)
           maybeInjectProfile(session, sessionId)
           break
         case 'user/message': {
-          const text = extractText(event.data?.message)
+          const text = messageText(event.data)
           if (text) buf.user = text
           break
         }
         case 'assistant/message': {
-          const text = extractText(event.data?.message)
+          const text = messageText(event.data)
           if (text) buf.assistant = buf.assistant ? `${buf.assistant}\n${text}` : text
           break
         }
         case 'turn/end': {
           if (!buf.user && !buf.assistant) return
-          buf.turn += 1
+          buf.turn = turnNumber(event.data, buf.turn)
           const turn = {
             turn: buf.turn,
             seq: event.seq,
