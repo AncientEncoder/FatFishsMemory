@@ -197,7 +197,8 @@ export function apply(ctx, config = {}) {
 
       switch (event.type) {
         case 'turn/start':
-          buf.user = ''
+          // 注意：不要清 buf.user。新进程启动时排队的用户消息会先于 turn/start
+          // 到达，这里清空会把真正的提问抹掉（曾经导致归档里 user 全空）。
           buf.assistant = ''
           buf.turn = turnNumber(event.data, buf.turn + 1)
           break
