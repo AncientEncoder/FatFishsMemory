@@ -12,11 +12,10 @@
         minTurnsPerCard: 6
         # 是否把每轮原文追加到磁盘
         archiveTurns: true
-        # 是否注入用户画像
-        # 已停用：splice 会往对话流里塞 plugin:* 消息，客户端渲染有风险。
-        # 改用「画像落盘 + 会话开始时主动读取」。
-        injectProfile: false
-        # 注入到哪个队列：next-turn | next-step（仅 injectProfile 开启时有效）
-        profileTarget: next-step
+        # 记忆目录：会话开始时把最近的卡片标题作为 system 消息注入
+        # 这是「知道自己有什么」的那一路，比被动检索更能提升命中率
+        hotMemory: true
+        # 目录里最多列几条
+        hotMemoryEntries: 8
         # 调试日志：发布/日常使用保持 false，排查时改 true
         debug: false

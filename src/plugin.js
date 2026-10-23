@@ -9,11 +9,18 @@ import { createBreaker, ensureDataDir, probeWrite, resolveDataDir, writeWelcome 
 import { collectLegacySessions, migrateToNewDataDir } from './migrate.js'
 import { createLogger, resolveDebug } from './log.js'
 import { isRuntimeContext, messageText, turnNumber } from './message.js'
+import { buildCatalog, buildCatalogMessage } from './hotmemory.js'
+
+const DEFAULT_WINDOW = 1048576
+
+/** 把回调推到当前任务之后执行（append 有重入保护，回调里不能直接 append）。 */
+function defer(fn) {
+  if (typeof queueMicrotask === 'function') queueMicrotask(fn)
+  else setTimeout(fn, 0)
+}
 
 export const name = 'dsh-fatfish-memory'
 export const inject = []
-
-const DEFAULT_WINDOW = 1048576
 
 export function apply(ctx, config = {}) {
   const cfg = {
@@ -23,6 +30,9 @@ export function apply(ctx, config = {}) {
     // 攒够多少轮才折成一张记忆卡（太小会把对话切得太碎）
     minTurnsPerCard: 6,
     archiveTurns: true,
+    // 记忆目录：会话开始时把最近的卡片标题塞成一条 system 消息
+    hotMemory: true,
+    hotMemoryEntries: 8,
     // 默认关闭：正常安装保持安静，发布时也保持这个值
     debug: false,
     ...config,
@@ -105,6 +115,33 @@ export function apply(ctx, config = {}) {
   const buffers = new Map()
   const state = new Map()
   const workspaces = new Map()
+  const catalogInjected = new Set()
+
+  /**
+   * 记忆目录：把最近的记忆卡标题作为一条 system 消息注入。
+   * 用 system/message 而不是 user/message —— 它是运行时注册系统提示的通道，
+   * 客户端有专门的处理路径；而 plugin:* 的 user 消息会污染对话流。
+   * 每个会话只注入一次，避免每轮都占上下文。
+   */
+  function maybeInjectCatalog(session, sessionId, workspace, turn) {
+    if (!cfg.hotMemory) return
+    if (catalogInjected.has(sessionId)) return
+    const s = stateOf(sessionId, workspace)
+    const entries = s.index.entries || []
+    const text = buildCatalog(entries, { maxEntries: cfg.hotMemoryEntries })
+    if (!text) return
+
+    catalogInjected.add(sessionId)
+    defer(() => {
+      try {
+        const { event, data } = buildCatalogMessage(text, { turn, step: 1 })
+        session.append(event, data)
+        log.info(`catalog injected (${text.length} chars, ${entries.length} cards)`)
+      } catch (error) {
+        log.error('catalog injection failed:', error?.stack ?? error?.message ?? String(error))
+      }
+    })
+  }
 
   /** 会话所属工作区：取 cwd 的最后一段；拿不到就归到 _unknown。 */
   function workspaceOf(session, sessionId) {
@@ -201,6 +238,7 @@ export function apply(ctx, config = {}) {
           // 到达，这里清空会把真正的提问抹掉（曾经导致归档里 user 全空）。
           buf.assistant = ''
           buf.turn = turnNumber(event.data, buf.turn + 1)
+          maybeInjectCatalog(session, sessionId, workspace, buf.turn)
           break
         case 'user/message': {
           // 时间/工作区这类 runtime-context 注入不是人说的话，跳过

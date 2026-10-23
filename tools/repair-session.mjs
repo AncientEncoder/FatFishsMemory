@@ -31,10 +31,19 @@ function splitFrames(buf) {
 }
 
 function isInjected(event) {
-  if (!event || event.type !== 'agent/inbox/spliced') return false
-  const inserted = event.data?.inserted
-  if (!Array.isArray(inserted)) return false
-  return inserted.some((m) => typeof m?.source?.kind === 'string' && m.source.kind.startsWith('plugin:'))
+  if (!event) return false
+  // 1) 插件塞进待发队列的 user 消息（source.kind = plugin:*）
+  if (event.type === 'agent/inbox/spliced') {
+    const inserted = event.data?.inserted
+    if (!Array.isArray(inserted)) return false
+    return inserted.some((m) => typeof m?.source?.kind === 'string' && m.source.kind.startsWith('plugin:'))
+  }
+  // 2) 插件注入的记忆目录（system/message 里带标记）
+  if (event.type === 'system/message') {
+    const text = event.data?.message?.content?.[0]?.text ?? ''
+    return String(text).includes('[记忆目录]')
+  }
+  return false
 }
 
 function main() {
