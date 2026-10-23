@@ -43,7 +43,33 @@ DSH 的上下文窗口是 1,048,576 tokens。装满了，最早的对话会被�
 - [x] 用户画像（`profile.json` + `profile.md`，可读可改）
 - [x] 数据目录可配、按工作区归类、迁移旧数据
 - [x] 首次运行保险机制（见下）
+- [x] 召回：关键词检索 + `recall.mjs` 命令行
 - [ ] 向量召回（替换关键词打分，接口不变）
+
+## 怎么翻记忆
+
+存了不等于能想起来，所以带了一个检索工具：
+
+```bash
+node tools/recall.mjs --list              # 有哪些会话
+node tools/recall.mjs "白屏"               # 搜原文
+node tools/recall.mjs "插件" --cards       # 只看记忆卡
+node tools/recall.mjs "重启" --session 10d841fa
+```
+
+输出长这样：
+
+```
+=== default-workspace / session-10d841fa… （12 轮）===
+  [轮 118] 2026/10/23 20:50:04  (score 9)
+        …今天那次白屏就是这么来的…
+```
+
+打分规则：**完整词组命中 > 拆词命中**，再按出现次数和时间加权。
+搜索范围是 `turns.jsonl` 原文 + `index.json` 里的记忆卡。
+
+> 注意：这个 CLI 直接读数据目录，**不需要 DSH 在运行**。
+
 
 ## 为什么不做"注入"
 
