@@ -33,6 +33,8 @@ export function apply(ctx, config = {}) {
     // 记忆目录：会话开始时把最近的卡片标题塞成一条 system 消息
     hotMemory: true,
     hotMemoryEntries: 8,
+    // 换 dataDir 时是否自动从旧目录复制数据
+    migrate: true,
     // 默认关闭：正常安装保持安静，发布时也保持这个值
     debug: false,
     ...config,
@@ -58,7 +60,8 @@ export function apply(ctx, config = {}) {
   if (resolved.warning) log.warn(resolved.warning)
 
   // 换了目录且新目录是空的 → 把旧目录整体复制过来（只复制，不删原数据）
-  if (resolved.source === 'config') {
+  // migrate: false 可关闭（测试用临时目录时需要，否则会把真实数据拷进去）
+  if (cfg.migrate !== false && resolved.source === 'config') {
     const migration = migrateToNewDataDir({ from: defaultRoot, to: root })
     if (migration.moved) log.warn(`已把旧数据从 ${migration.from} 复制到 ${migration.to}`)
   }
@@ -135,7 +138,9 @@ export function apply(ctx, config = {}) {
     defer(() => {
       try {
         const { event, data } = buildCatalogMessage(text, { turn, step: 1 })
-        session.append(event, data)
+        // system/message 是 surface-eligible 事件，必须带 surfaceOp 标记，
+        // 否则 runtime 直接拒绝（错误信息里写得很清楚）。
+        session.append(event, data, { surfaceOp: 'append' })
         log.info(`catalog injected (${text.length} chars, ${entries.length} cards)`)
       } catch (error) {
         log.error('catalog injection failed:', error?.stack ?? error?.message ?? String(error))

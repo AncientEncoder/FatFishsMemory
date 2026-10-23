@@ -9,19 +9,23 @@ import { readTurns } from '../src/store.js'
 function harness(config = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ffm-plugin-'))
   const handlers = new Map()
+  const appends = []
   const ctx = {
     on(type, fn) { handlers.set(type, fn); return () => handlers.delete(type) },
     effect(fn) { const off = fn(); return () => off?.() },
     logger: () => ({ info() {}, error() {}, warn() {} }),
   }
-  apply(ctx, { dataDir: dir, ...config })
-  const session = { header: { id: 'sess-1', cwd: 'C:\\ws\\proj' }, append: () => null }
+  apply(ctx, { dataDir: dir, migrate: false, ...config })
+  const session = {
+    header: { id: 'sess-1', cwd: 'C:\\ws\\proj' },
+    append: (event, data, options) => { appends.push({ event, data, options }); return { event, data } },
+  }
   let seq = 0
   const emit = (type, data = {}) => {
     seq += 1
     handlers.get('session/event')(session, { type, seq, data })
   }
-  return { dir, emit }
+  return { dir, emit, appends }
 }
 
 const userMsg = (text) => ({
@@ -36,6 +40,12 @@ const assistantMsg = (turn, text) => ({
   step: 1,
   message: { role: 'assistant', content: [{ type: 'reasoning', text: '思考' }, { type: 'text', text }] },
 })
+
+const seedIndex = (dir, cards) => {
+  const sessionDir = path.join(dir, 'proj', 'sess-1')
+  fs.mkdirSync(sessionDir, { recursive: true })
+  fs.writeFileSync(path.join(sessionDir, 'index.json'), JSON.stringify({ entries: cards }), 'utf8')
+}
 
 test('user text survives a user/message that arrives before turn/start', () => {
   const { dir, emit } = harness()
@@ -79,4 +89,38 @@ test('reasoning blocks never leak into the archive', () => {
   const turns = readTurns(dir, 'sess-1', 'proj')
   assert.equal(turns[0].assistant, '结论')
   assert.ok(!turns[0].assistant.includes('思考'))
+})
+
+test('catalog is injected as a system/message with a surfaceOp marker', async () => {
+  const { dir, emit, appends } = harness()
+  seedIndex(dir, [{ date: '2026-10-23', from: 1, to: 1, title: '修服务器 SFTP', points: [], keywords: [] }])
+
+  emit('turn/start', { turn: 9 })
+  await new Promise((resolve) => queueMicrotask(resolve))
+
+  const injected = appends.find((a) => a.event === 'system/message')
+  assert.ok(injected, 'should append a system/message')
+  assert.deepEqual(injected.options, { surfaceOp: 'append' })
+  assert.equal(injected.data.message.role, 'system')
+  assert.match(injected.data.message.content[0].text, /\[记忆目录\]/)
+  assert.equal(injected.data.turn, 9)
+})
+
+test('catalog is not injected twice in one session', async () => {
+  const { dir, emit, appends } = harness()
+  seedIndex(dir, [{ date: '2026-10-23', from: 1, to: 1, title: '一件事', points: [], keywords: [] }])
+
+  emit('turn/start', { turn: 1 })
+  await new Promise((resolve) => queueMicrotask(resolve))
+  emit('turn/start', { turn: 2 })
+  await new Promise((resolve) => queueMicrotask(resolve))
+
+  assert.equal(appends.filter((a) => a.event === 'system/message').length, 1)
+})
+
+test('no catalog is injected when there are no cards', async () => {
+  const { emit, appends } = harness()
+  emit('turn/start', { turn: 3 })
+  await new Promise((resolve) => queueMicrotask(resolve))
+  assert.equal(appends.filter((a) => a.event === 'system/message').length, 0)
 })

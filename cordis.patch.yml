@@ -18,4 +18,5 @@
         # 目录里最多列几条
         hotMemoryEntries: 8
         # 调试日志：发布/日常使用保持 false，排查时改 true
-        debug: false
+        # [TEST] 临时打开，验证记忆目录注入
+        debug: true
