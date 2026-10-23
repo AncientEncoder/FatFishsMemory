@@ -3,7 +3,8 @@
       name: dsh-fatfish-memory
       config:
         enabled: true
-        # 留空则用 ~/.dsh/fatfish-memory
+        # 数据目录：留空 = ~/.dsh/fatfish-memory
+        # 支持绝对路径或 ~/xxx；配了但不可用会回落到默认目录并警告
         dataDir: ""
         # 上下文压力超过这个比例就开始压缩（0-1）
         compactAt: 0.6

@@ -9,6 +9,8 @@ import {
   safeReadJson,
   createBreaker,
   writeWelcome,
+  expandHome,
+  resolveDataDir,
 } from '../src/safety.js'
 
 test('ensureDataDir creates nested directories', () => {
@@ -63,4 +65,34 @@ test('writeWelcome only writes once', () => {
   assert.equal(writeWelcome(root), true)
   assert.equal(writeWelcome(root), false)
   assert.ok(fs.readFileSync(path.join(root, 'README.md'), 'utf8').includes('FatFishsMemory'))
+})
+
+test('expandHome handles ~ forms', () => {
+  const home = 'C:\\Users\\tester'
+  assert.equal(expandHome('~', home), home)
+  assert.equal(expandHome('~/mem', home), path.join(home, 'mem'))
+  assert.equal(expandHome('C:\\data', home), 'C:\\data')
+  assert.equal(expandHome('', home), '')
+})
+
+test('resolveDataDir: default / configured / fallback', () => {
+  const home = fs.mkdtempSync(path.join(os.tmpdir(), 'ffm-home-'))
+  const fallback = path.join(home, '.dsh', 'fatfish-memory')
+
+  const none = resolveDataDir({ configured: '', fallback, homeDir: home })
+  assert.equal(none.source, 'default')
+  assert.equal(none.dir, fallback)
+
+  const custom = path.join(home, 'custom-mem')
+  const configured = resolveDataDir({ configured: custom, fallback, homeDir: home })
+  assert.equal(configured.source, 'config')
+  assert.ok(fs.existsSync(custom))
+
+  // 指向一个"文件"而不是目录，必然建不出来 → 回落 + 警告
+  const blocker = path.join(home, 'blocker')
+  fs.writeFileSync(blocker, 'x', 'utf8')
+  const broken = resolveDataDir({ configured: blocker, fallback, homeDir: home })
+  assert.equal(broken.source, 'fallback')
+  assert.equal(broken.dir, fallback)
+  assert.match(broken.warning, /不可用/)
 })

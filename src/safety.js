@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 
 /**
@@ -12,6 +13,36 @@ export function ensureDataDir(root) {
     return true
   } catch {
     return false
+  }
+}
+
+/** 展开 `~`、`~/x`、`~\x`——配置里写波浪号不该变成字面目录名。 */
+export function expandHome(value, homeDir = os.homedir()) {
+  const text = String(value ?? '').trim()
+  if (!text) return ''
+  if (text === '~') return homeDir
+  if (text.startsWith('~/') || text.startsWith('~\\')) return path.join(homeDir, text.slice(2))
+  return text
+}
+
+/**
+ * 解析数据目录：
+ * - 没配 → 用默认目录
+ * - 配了且可写 → 用配置的（转绝对路径）
+ * - 配了但不可用 → 回落到默认目录，并返回 warning（让用户知道配置没生效）
+ */
+export function resolveDataDir({ configured, fallback, homeDir = os.homedir() } = {}) {
+  const wanted = expandHome(configured, homeDir)
+  if (!wanted) return { dir: fallback, source: 'default', warning: null }
+
+  const absolute = path.resolve(wanted)
+  if (ensureDataDir(absolute) && probeWrite(absolute)) {
+    return { dir: absolute, source: 'config', warning: null }
+  }
+  return {
+    dir: fallback,
+    source: 'fallback',
+    warning: `配置的数据目录不可用：${absolute}，已回落到 ${fallback}`,
   }
 }
 

@@ -6,7 +6,7 @@ import { makeCard } from './compact.js'
 import { isCompactionEvent, recordCompaction } from './compaction.js'
 import { emptyProfile, renderProfileCard } from './profile.js'
 import { buildRecallMessage, spliceInbox } from './inject.js'
-import { createBreaker, ensureDataDir, probeWrite, writeWelcome } from './safety.js'
+import { createBreaker, ensureDataDir, probeWrite, resolveDataDir, writeWelcome } from './safety.js'
 import { createLogger, resolveDebug } from './log.js'
 import { isRuntimeContext, messageText, turnNumber } from './message.js'
 
@@ -34,7 +34,12 @@ export function apply(ctx, config = {}) {
   const log = createLogger({ debug, prefix: '[fatfish-memory]' })
 
   const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
-  const root = cfg.dataDir || path.join(dshHome, 'fatfish-memory')
+  const defaultRoot = path.join(dshHome, 'fatfish-memory')
+
+  // 数据目录可配：没配走默认；配了但不可用就回落并警告，绝不静默降级
+  const resolved = resolveDataDir({ configured: cfg.dataDir, fallback: defaultRoot })
+  const root = resolved.dir
+  if (resolved.warning) log.warn(resolved.warning)
 
   // ---- first-run safety net -------------------------------------------------
   // A missing or unwritable data directory must degrade to read-only instead of
