@@ -14,6 +14,7 @@ import { isRuntimeContext, messageText, turnNumber } from './message.js'
 import { buildCatalog, buildCatalogMessage, catalogId } from './hotmemory.js'
 import { findBoundary } from './boundary.js'
 import { splitForRetention } from './retention.js'
+import { buildRecallDigest, hasRecallCue, hitsIndex } from './autorecall.js'
 
 const DEFAULT_WINDOW = 1048576
 
@@ -39,6 +40,9 @@ export function apply(ctx, config = {}) {
     hotMemoryEntries: 8,
     // 卡片保留上限：超出的挪进 archive/，不是删除
     maxCards: 300,
+    // 自动查表：回指过去的问题，先翻温层和冷层再回答
+    autoRecall: true,
+    autoRecallMax: 3,
     // 自动更新画像印象：「最近」看当下语气，「长期」看反复出现
     impressions: true,
     // 「最近」最多多久更新一次（毫秒），默认一小时
@@ -179,6 +183,7 @@ export function apply(ctx, config = {}) {
   const state = new Map()
   const workspaces = new Map()
   const catalogInjected = new Map()
+  const recallInjected = new Map()
 
   /**
    * 记忆目录：把最近的记忆卡标题作为一条 system 消息注入。
@@ -211,6 +216,44 @@ export function apply(ctx, config = {}) {
         log.info(`catalog injected (${text.length} chars, ${entries.length} cards, id ${id})`)
       } catch (error) {
         log.error('catalog injection failed:', error?.stack ?? error?.message ?? String(error))
+      }
+    })
+  }
+
+  /**
+   * 自动查表：「先看看温备，没有就照旧」。
+   *
+   * 只在两件事同时成立时才动手：这句话像是在回指过去，而且温层里确实有相关记录。
+   * 查不到就什么都不做——宁可不提示，也不塞无关记忆。
+   */
+  function maybeAutoRecall(session, sessionId, workspace, query, turn, step) {
+    if (!cfg.autoRecall || !query) return
+    if (recallInjected.get(sessionId) === turn) return
+
+    const s = stateOf(sessionId, workspace)
+    const cards = s.index.entries || []
+    // 第一道闸：不像在问过去、也没命中目录实体，直接跳过（省一次全量读取）
+    if (!hasRecallCue(query) && !hitsIndex(cards, query)) return
+    recallInjected.set(sessionId, turn)
+
+    defer(() => {
+      try {
+        const recent = readTurns(root, sessionId, workspace).slice(-200)
+        const { text } = buildRecallDigest(query, { cards, turns: recent, limit: cfg.autoRecallMax })
+        if (!text) return
+        session.append('system/message', {
+          turn,
+          step,
+          message: {
+            id: `fatfish-recall-${catalogId(text)}`,
+            role: 'system',
+            source: { kind: 'system-prompt' },
+            content: [{ type: 'text', text }],
+          },
+        }, { surfaceOp: 'append' })
+        log.info(`auto-recall injected (${text.length} chars)`)
+      } catch (error) {
+        log.error('auto-recall failed:', error?.stack ?? error?.message ?? String(error))
       }
     })
   }
@@ -370,7 +413,12 @@ export function apply(ctx, config = {}) {
           const step = Number.isInteger(event.data?.step) && event.data.step > 0 ? event.data.step : 1
           buf.turn = turn
           buf.step = step
-          if (hasSystemPrompt(session)) maybeInjectCatalog(session, sessionId, workspace, turn, step)
+          if (hasSystemPrompt(session)) {
+            maybeInjectCatalog(session, sessionId, workspace, turn, step)
+            // 「干事之前先看看温备」：拿这一轮最后一句人话去查表
+            const query = (buf.userLines || []).slice(-1)[0] || ''
+            maybeAutoRecall(session, sessionId, workspace, query, turn, step)
+          }
           break
         }
         case 'system/message': {
