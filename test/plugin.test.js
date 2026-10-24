@@ -135,20 +135,33 @@ test('catalog is injected at step/start when a system prompt already exists', as
 
 test('catalog is not injected when the session already has a persisted catalog', async () => {
   const cards = [{ date: '2026-10-23', from: 1, to: 1, title: '旧记忆', points: [], keywords: [] }]
-  const existingId = catalogId(buildCatalog(cards, { maxEntries: 8 }))
+
+  // 先跑一次，拿到插件实际生成的 id（不要自己拼，免得内部细节变了测试就碎）
+  const first = harness()
+  seedIndex(first.dir, cards)
+  first.emit('step/start', { turn: 1, step: 1 })
+  first.emit('system/message', {
+    turn: 1,
+    step: 1,
+    message: { id: 'sp-1', role: 'system', source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'prompt' }] },
+  })
+  await new Promise((resolve) => queueMicrotask(resolve))
+  const injectedId = first.appends.find((a) => a.event === 'system/message')?.data?.message?.id
+  assert.ok(injectedId, 'first run should inject')
+
+  // 再开一个会话，surface 里已经有这条 -> 不该重复注入
   const session = {
     surface: { nodes: [0, 1] },
     eventAt: (seq) => seq === 1
-      ? { type: 'system/message', data: { message: { id: existingId, content: [] } } }
+      ? { type: 'system/message', data: { message: { id: injectedId, content: [] } } }
       : { type: 'system/message' },
   }
-  const { dir, emit, appends } = harness({}, session)
-  seedIndex(dir, cards)
-
-  emit('step/start', { turn: 2, step: 1 })
+  const second = harness({}, session)
+  seedIndex(second.dir, cards)
+  second.emit('step/start', { turn: 2, step: 1 })
   await new Promise((resolve) => queueMicrotask(resolve))
 
-  assert.equal(appends.filter((a) => a.event === 'system/message').length, 0)
+  assert.equal(second.appends.filter((a) => a.event === 'system/message').length, 0)
 })
 
 test('catalog is not injected twice in one session', async () => {
