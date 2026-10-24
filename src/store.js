@@ -62,6 +62,19 @@ export function writeIndex(root, sessionId, index, workspace) {
   fs.writeFileSync(path.join(dir, 'index.json'), JSON.stringify(index, null, 2), 'utf8')
 }
 
+/**
+ * 把超出保留上限的老卡片挪进 archive/。
+ * 只移动、不删除——需要考古时还能翻。
+ */
+export function archiveCards(root, sessionId, cards, workspace) {
+  const dir = path.join(sessionDir(root, sessionId, workspace), 'archive')
+  ensureDir(dir)
+  const stamp = new Date().toISOString().replace(/[:.]/g, '-')
+  const file = path.join(dir, `cards-${stamp}.json`)
+  fs.writeFileSync(file, JSON.stringify({ archivedAt: new Date().toISOString(), cards }, null, 2), 'utf8')
+  return file
+}
+
 // ---- user profile (per installation, not per session) ----
 
 export function readProfile(root) {

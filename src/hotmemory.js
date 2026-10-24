@@ -8,8 +8,6 @@
  * 目标：不超过 200 token，宁短勿长——它每轮都要占着上下文。
  */
 
-import { randomUUID } from 'node:crypto'
-
 export function buildCatalog(cards, { maxEntries = 8, maxChars = 600 } = {}) {
   const list = (cards || []).filter(Boolean)
   if (list.length === 0) return ''
@@ -35,8 +33,19 @@ export function buildCatalog(cards, { maxEntries = 8, maxChars = 600 } = {}) {
   return text
 }
 
+/** 内容指纹：目录变了才值得再注入一次。 */
+export function catalogId(text) {
+  let h = 2166136261
+  const str = String(text || '')
+  for (let i = 0; i < str.length; i += 1) {
+    h ^= str.charCodeAt(i)
+    h = Math.imul(h, 16777619)
+  }
+  return `fatfish-catalog-${(h >>> 0).toString(16)}`
+}
+
 /** 系统消息的形状，照抄 runtime 自己注册 system prompt 的那条。 */
-export function buildCatalogMessage(text, { turn = 0, step = 1, id = `fatfish-catalog-${randomUUID()}` } = {}) {
+export function buildCatalogMessage(text, { turn = 0, step = 1, id = catalogId(text) } = {}) {
   return {
     event: 'system/message',
     data: {

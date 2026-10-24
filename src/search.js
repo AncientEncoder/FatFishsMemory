@@ -1,12 +1,20 @@
 import { keywordsOf, makeCard } from './compact.js'
+import { embed, cosine } from './vectors.js'
+import { decayFactor } from './decay.js'
 
 /**
  * 检索层。
  * 两端：卡片（粗粒度，已经是摘要）和原始轮次（细粒度，能翻出原话）。
- * 打分方式是有意的简化版 BM25：关键词命中 + 词组命中 + 时间衰减。
+ *
+ * 三个信号叠加：
+ *   1. 关键词命中（精确，权重高）
+ *   2. 本地 n-gram 向量相似度（容错，能命中字面相关但拆词不同的）
+ *   3. 时间衰减（老记忆降权，但不消失）
+ *
+ * 全部可替换：换成真 embedding 只需要改 vectors.js。
  */
 
-function scoreText(text, qWords, qRaw) {
+function keywordScore(text, qWords, qRaw) {
   const haystack = String(text || '')
   const lower = haystack.toLowerCase()
   let score = 0
@@ -17,40 +25,50 @@ function scoreText(text, qWords, qRaw) {
   for (const word of qWords) {
     if (!lower.includes(word.toLowerCase())) continue
     score += 2
-    // 出现多次，最多再加 2
     const hits = lower.split(word.toLowerCase()).length - 1
     score += Math.min(2, hits - 1)
   }
   return score
 }
 
-export function searchTurns(turns, query, { limit = 5, minScore = 2 } = {}) {
+export function searchTurns(turns, query, { limit = 5, minScore = 2, now = Date.now() } = {}) {
   const qRaw = String(query || '').trim()
   const qWords = keywordsOf(qRaw, 12)
   if (!qWords.length && !qRaw) return []
 
+  const qVec = embed(qRaw)
   const hits = []
   for (const turn of turns) {
     const text = `${turn.user || ''}\n${turn.assistant || ''}`
-    const score = scoreText(text, qWords, qRaw)
-    if (score < minScore) continue
-    hits.push({ turn: turn.turn, ts: turn.ts, score, text })
+    const keywords = keywordScore(text, qWords, qRaw)
+    const semantic = cosine(qVec, embed(text)) * 2.5
+    const relevance = keywords + semantic
+    // 门槛看"相关性"，排序用"相关性 × 衰减"——老记忆排后面，但不会被过滤掉
+    if (relevance < minScore) continue
+    const score = relevance * decayFactor(turn.ts, { now })
+    hits.push({ turn: turn.turn, ts: turn.ts, score, text, keywords, semantic })
   }
   return hits.sort((a, b) => b.score - a.score || (b.turn || 0) - (a.turn || 0)).slice(0, limit)
 }
 
-export function searchCards(cards, query, { limit = 3, minScore = 2 } = {}) {
+export function searchCards(cards, query, { limit = 3, minScore = 2, now = Date.now() } = {}) {
   const qRaw = String(query || '').trim()
   const qWords = keywordsOf(qRaw, 12)
   if (!qWords.length && !qRaw) return []
 
+  const qVec = embed(qRaw)
   const hits = []
   for (const card of cards || []) {
-    const text = [card.title, ...(card.points || []), ...(card.keywords || [])].join(' ')
-    let score = scoreText(text, qWords, qRaw)
-    if (score > 0) score += 1 // 卡片本身就是提炼过的，命中优先
-    if (score < minScore) continue
-    hits.push({ card, score })
+    const text = [card.title, card.goal, card.outcome, ...(card.points || []), ...(card.keywords || [])]
+      .filter(Boolean)
+      .join(' ')
+    const keywords = keywordScore(text, qWords, qRaw)
+    const semantic = cosine(qVec, embed(text)) * 3
+    let relevance = keywords + semantic
+    if (relevance > 0) relevance += 1 // 卡片本身就是提炼过的，命中优先
+    if (relevance < minScore) continue
+    const score = relevance * decayFactor(card.date, { now })
+    hits.push({ card, score, relevance, keywords, semantic })
   }
   return hits.sort((a, b) => b.score - a.score).slice(0, limit)
 }

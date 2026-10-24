@@ -1,6 +1,6 @@
 import os from 'node:os'
 import path from 'node:path'
-import { appendTurn, readIndex, writeIndex, readTurns, readProfile, writeProfile, writeProfileMarkdown, workspaceSlug } from './store.js'
+import { appendTurn, readIndex, writeIndex, readTurns, readProfile, writeProfile, writeProfileMarkdown, workspaceSlug, archiveCards } from './store.js'
 import { estimateTokens, pressureOf } from './pressure.js'
 import { makeCard } from './compact.js'
 import { isCompactionEvent, recordCompaction } from './compaction.js'
@@ -9,8 +9,9 @@ import { createBreaker, ensureDataDir, probeWrite, resolveDataDir, writeWelcome 
 import { collectLegacySessions, migrateToNewDataDir } from './migrate.js'
 import { createLogger, resolveDebug } from './log.js'
 import { isRuntimeContext, messageText, turnNumber } from './message.js'
-import { buildCatalog, buildCatalogMessage } from './hotmemory.js'
+import { buildCatalog, buildCatalogMessage, catalogId } from './hotmemory.js'
 import { findBoundary } from './boundary.js'
+import { splitForRetention } from './retention.js'
 
 const DEFAULT_WINDOW = 1048576
 
@@ -34,6 +35,8 @@ export function apply(ctx, config = {}) {
     // 记忆目录：会话开始时把最近的卡片标题塞成一条 system 消息
     hotMemory: true,
     hotMemoryEntries: 8,
+    // 卡片保留上限：超出的挪进 archive/，不是删除
+    maxCards: 300,
     // 换 dataDir 时是否自动从旧目录复制数据
     migrate: true,
     // 默认关闭：正常安装保持安静，发布时也保持这个值
@@ -119,34 +122,37 @@ export function apply(ctx, config = {}) {
   const buffers = new Map()
   const state = new Map()
   const workspaces = new Map()
-  const catalogInjected = new Set()
+  const catalogInjected = new Map()
 
   /**
    * 记忆目录：把最近的记忆卡标题作为一条 system 消息注入。
    * 用 system/message 而不是 user/message —— 它是运行时注册系统提示的通道，
    * 客户端有专门的处理路径；而 plugin:* 的 user 消息会污染对话流。
-   * 每个会话只注入一次，避免每轮都占上下文。
+   *
+   * 去重按**内容指纹**：目录没变就不重复注入，新卡片出现后自动刷新一次。
    */
   function maybeInjectCatalog(session, sessionId, workspace, turn, step = 1) {
     if (!cfg.hotMemory) return
-    if (catalogInjected.has(sessionId)) return
-    if (hasCatalogMessage(session)) {
-      catalogInjected.add(sessionId)
-      return
-    }
     const s = stateOf(sessionId, workspace)
     const entries = s.index.entries || []
     const text = buildCatalog(entries, { maxEntries: cfg.hotMemoryEntries })
     if (!text) return
 
-    catalogInjected.add(sessionId)
+    const id = catalogId(text)
+    if (catalogInjected.get(sessionId) === id) return
+    if (hasCatalogMessage(session, id)) {
+      catalogInjected.set(sessionId, id)
+      return
+    }
+
+    catalogInjected.set(sessionId, id)
     defer(() => {
       try {
         const { event, data } = buildCatalogMessage(text, { turn, step })
         // system/message 是 surface-eligible 事件，必须带 surfaceOp 标记，
         // 且只能在 turn/step 已打开、且系统提示已经占住 surface head 时追加。
         session.append(event, data, { surfaceOp: 'append' })
-        log.info(`catalog injected (${text.length} chars, ${entries.length} cards)`)
+        log.info(`catalog injected (${text.length} chars, ${entries.length} cards, id ${id})`)
       } catch (error) {
         log.error('catalog injection failed:', error?.stack ?? error?.message ?? String(error))
       }
@@ -168,16 +174,15 @@ export function apply(ctx, config = {}) {
     }
   }
 
-  /** 已落盘的 catalog 用 id 前缀识别，重启/resume 后不重复注入。 */
-  function hasCatalogMessage(session) {
+  /** 已落盘的 catalog 用内容指纹识别：同一个指纹说明目录没变，不用再注入。 */
+  function hasCatalogMessage(session, id) {
     try {
       const nodes = session?.surface?.nodes
       if (!Array.isArray(nodes)) return false
       return nodes.some((seq) => {
         const event = session.eventAt?.(seq)
         if (event?.type !== 'system/message') return false
-        const id = event.data?.message?.id
-        return typeof id === 'string' && id.startsWith('fatfish-catalog-')
+        return event.data?.message?.id === id
       })
     } catch {
       return false
@@ -246,6 +251,15 @@ export function apply(ctx, config = {}) {
     s.index.compactedThrough = s.compactedThrough
     s.index.estimatedTokens = s.tokens
     s.index.lastTurn = s.turn
+
+    // 卡片不能无限涨：超上限时把最老的挪进 archive/（不是删除）
+    const { kept, dropped } = splitForRetention(s.index.entries, { maxCards: cfg.maxCards })
+    if (dropped.length) {
+      s.index.entries = kept
+      guarded(() => archiveCards(root, sessionId, dropped, workspace))
+      log.info(`retention: moved ${dropped.length} old cards to archive/`)
+    }
+
     guarded(() => writeIndex(root, sessionId, s.index, workspace))
     log.info(`compacted turns ${card.from}-${card.to} -> "${card.title}"`)
     return card

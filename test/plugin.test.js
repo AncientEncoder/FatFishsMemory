@@ -5,6 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { apply } from '../src/plugin.js'
 import { readTurns } from '../src/store.js'
+import { buildCatalog, catalogId } from '../src/hotmemory.js'
 
 function harness(config = {}, overrides = {}) {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ffm-plugin-'))
@@ -133,14 +134,16 @@ test('catalog is injected at step/start when a system prompt already exists', as
 })
 
 test('catalog is not injected when the session already has a persisted catalog', async () => {
+  const cards = [{ date: '2026-10-23', from: 1, to: 1, title: '旧记忆', points: [], keywords: [] }]
+  const existingId = catalogId(buildCatalog(cards, { maxEntries: 8 }))
   const session = {
     surface: { nodes: [0, 1] },
     eventAt: (seq) => seq === 1
-      ? { type: 'system/message', data: { message: { id: 'fatfish-catalog-old', content: [] } } }
+      ? { type: 'system/message', data: { message: { id: existingId, content: [] } } }
       : { type: 'system/message' },
   }
   const { dir, emit, appends } = harness({}, session)
-  seedIndex(dir, [{ date: '2026-10-23', from: 1, to: 1, title: '旧记忆', points: [], keywords: [] }])
+  seedIndex(dir, cards)
 
   emit('step/start', { turn: 2, step: 1 })
   await new Promise((resolve) => queueMicrotask(resolve))
