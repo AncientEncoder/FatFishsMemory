@@ -1,5 +1,6 @@
 import os from 'node:os'
 import path from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { appendTurn, readIndex, writeIndex, readTurns, readProfile, writeProfile, writeProfileMarkdown, workspaceSlug, archiveCards } from './store.js'
 import { estimateTokens, pressureOf } from './pressure.js'
 import { makeCard } from './compact.js'
@@ -51,6 +52,12 @@ export function apply(ctx, config = {}) {
   if (cfg.enabled === false) return
 
   const debug = resolveDebug(cfg.debug, process.env)
+
+  // 目录里告诉模型"怎么查"：命令写死成绝对路径，模型不用猜
+  const here = path.dirname(fileURLToPath(import.meta.url))
+  const recallCommand = cfg.recallHint === false
+    ? ''
+    : `node "${path.join(here, '..', 'tools', 'recall.mjs')}" "关键词"`
 
   const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
   const defaultRoot = path.join(dshHome, 'fatfish-memory')
@@ -184,7 +191,7 @@ export function apply(ctx, config = {}) {
     if (!cfg.hotMemory) return
     const s = stateOf(sessionId, workspace)
     const entries = s.index.entries || []
-    const text = buildCatalog(entries, { maxEntries: cfg.hotMemoryEntries })
+    const text = buildCatalog(entries, { maxEntries: cfg.hotMemoryEntries, recallCommand })
     if (!text) return
 
     const id = catalogId(text)

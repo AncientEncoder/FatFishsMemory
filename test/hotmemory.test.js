@@ -27,6 +27,23 @@ test('catalog keeps only the newest N cards', () => {
   assert.ok(!text.includes('第 0 件'))
 })
 
+test('catalog can carry a "how to look it up" hint', () => {
+  const cmd = 'node "/x/tools/recall.mjs" "关键词"'
+  const text = buildCatalog(cards, { recallCommand: cmd })
+  assert.ok(text.includes('查细节'))
+  assert.ok(text.includes('recall.mjs'))
+  // 不传就不该有
+  assert.ok(!buildCatalog(cards).includes('查细节'))
+})
+
+test('tight budget drops cards but keeps the hint', () => {
+  const many = Array.from({ length: 6 }, (_, i) => ({ date: '2026-10-23', title: `很长很长的一条记忆 ${i}` }))
+  const cmd = 'node "/x/tools/recall.mjs" "关键词"'
+  const text = buildCatalog(many, { recallCommand: cmd, maxChars: 120 })
+  assert.ok(text.includes('查细节'), 'hint must survive truncation')
+  assert.ok(text.length <= 200)
+})
+
 test('catalog respects the char budget', () => {
   const many = Array.from({ length: 50 }, (_, i) => ({ date: '2026-10-23', title: `很长很长的记忆标题 ${i}` }))
   const text = buildCatalog(many, { maxEntries: 50, maxChars: 200 })

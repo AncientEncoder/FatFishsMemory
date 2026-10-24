@@ -8,7 +8,7 @@
  * 目标：不超过 200 token，宁短勿长——它每轮都要占着上下文。
  */
 
-export function buildCatalog(cards, { maxEntries = 8, maxChars = 600 } = {}) {
+export function buildCatalog(cards, { maxEntries = 8, maxChars = 600, recallCommand = '' } = {}) {
   const list = (cards || []).filter(Boolean)
   if (list.length === 0) return ''
 
@@ -21,14 +21,17 @@ export function buildCatalog(cards, { maxEntries = 8, maxChars = 600 } = {}) {
     lines.push(`- ${date}${title}`)
   }
   if (lines.length === 1) return ''
+  // 告诉它"怎么查"——只说"可以查"是不够的，模型不会自己猜命令
+  if (recallCommand) lines.push(`（查细节：${recallCommand}）`)
 
   let text = lines.join('\n')
   if (text.length > maxChars) {
-    // 从末尾截断：最近的记忆更重要
+    // 从末尾截断：最近的记忆更重要（但保留"怎么查"那一行）
     const head = lines[0]
-    const body = lines.slice(1)
-    while (body.length > 0 && (head + '\n' + body.join('\n')).length > maxChars) body.shift()
-    text = [head, ...body].join('\n')
+    const hint = recallCommand ? lines[lines.length - 1] : null
+    const body = lines.slice(1, hint ? lines.length - 1 : lines.length)
+    while (body.length > 0 && [head, ...body, hint].filter(Boolean).join('\n').length > maxChars) body.shift()
+    text = [head, ...body, hint].filter(Boolean).join('\n')
   }
   return text
 }
