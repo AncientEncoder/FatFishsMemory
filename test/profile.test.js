@@ -35,3 +35,27 @@ test('markdown view lists every section', () => {
 test('unknown section throws', () => {
   assert.throws(() => addFact(emptyProfile(), 'nope', 'x'))
 })
+
+test('recent is rolling: only the newest line survives', () => {
+  const p = emptyProfile()
+  addFact(p, 'recent', '今天在修服务器')
+  addFact(p, 'recent', '今天在打战争雷霆周年庆')
+  assert.equal(p.sections.recent.length, 1)
+  assert.equal(p.sections.recent[0].text, '今天在打战争雷霆周年庆')
+})
+
+test('recent shows up first in the markdown view', () => {
+  const p = emptyProfile()
+  addFact(p, 'recent', '心情不错')
+  addFact(p, 'identity', '后端工程师')
+  const md = renderProfileMarkdown(p)
+  assert.ok(md.indexOf('## 最近') < md.indexOf('## 身份'))
+  assert.ok(md.includes('**心情不错**'))
+})
+
+test('recent does not render twice', () => {
+  const p = emptyProfile()
+  addFact(p, 'recent', '一句话状态')
+  const md = renderProfileMarkdown(p)
+  assert.equal(md.split('一句话状态').length - 1, 1)
+})
