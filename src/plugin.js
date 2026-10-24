@@ -5,6 +5,7 @@ import { estimateTokens, pressureOf } from './pressure.js'
 import { makeCard } from './compact.js'
 import { isCompactionEvent, recordCompaction } from './compaction.js'
 import { emptyProfile, renderProfileCard, renderProfileMarkdown } from './profile.js'
+import { applyRecentSignal, applyStableFacts, detectRecentSignal, findStableFacts } from './impressions.js'
 import { createBreaker, ensureDataDir, probeWrite, resolveDataDir, writeWelcome } from './safety.js'
 import { collectLegacySessions, migrateToNewDataDir } from './migrate.js'
 import { createLogger, resolveDebug } from './log.js'
@@ -37,6 +38,10 @@ export function apply(ctx, config = {}) {
     hotMemoryEntries: 8,
     // 卡片保留上限：超出的挪进 archive/，不是删除
     maxCards: 300,
+    // 自动更新画像印象：「最近」看当下语气，「长期」看反复出现
+    impressions: true,
+    // 「最近」最多多久更新一次（毫秒），默认一小时
+    recentEveryMs: 60 * 60 * 1000,
     // 换 dataDir 时是否自动从旧目录复制数据
     migrate: true,
     // 默认关闭：正常安装保持安静，发布时也保持这个值
@@ -74,6 +79,7 @@ export function apply(ctx, config = {}) {
   // A missing or unwritable data directory must degrade to read-only instead of
   // throwing once per turn: someone installing this for the first time should
   // get a working plugin, not a wall of errors.
+  let profile = null
   const dirReady = ensureDataDir(root)
   const writable = dirReady && probeWrite(root)
   if (!dirReady) {
@@ -84,7 +90,7 @@ export function apply(ctx, config = {}) {
     cfg.archiveTurns = false
   } else {
     writeWelcome(root)
-    let profile = readProfile(root)
+    profile = readProfile(root)
     if (!profile) {
       try {
         profile = writeProfile(root, emptyProfile())
@@ -105,6 +111,49 @@ export function apply(ctx, config = {}) {
       log.error('连续写入失败，已停止落盘（本次会话）：', error?.message ?? error)
     },
   })
+
+  /** 画像落盘（JSON + markdown）。失败不致命。 */
+  function saveProfile() {
+    if (!profile) return
+    try {
+      writeProfile(root, profile)
+      writeProfileMarkdown(root, renderProfileMarkdown(profile))
+    } catch (error) {
+      log.error('profile write failed:', error?.message ?? error)
+    }
+  }
+
+  /**
+   * 「最近」层：看当下的语气。
+   * 只在有新的时间/状态线索时更新，并且一小时最多一次，避免每轮都写。
+   */
+  function maybeUpdateRecent(buf) {
+    if (!cfg.impressions || !profile) return
+    const last = profile.meta?.lastRecentAt ? Date.parse(profile.meta.lastRecentAt) : 0
+    const now = Date.now()
+    if (Number.isFinite(last) && now - last < cfg.recentEveryMs) return
+
+    const signal = detectRecentSignal((buf.userLines || []).map((text) => ({ user: text })))
+    // 没有信号也要打时间戳：避免每轮都重新扫一遍
+    profile.meta = { ...(profile.meta || {}), lastRecentAt: new Date(now).toISOString() }
+    if (!signal) return
+    if (!applyRecentSignal(profile, signal)) return
+    saveProfile()
+    log.info(`recent updated: ${signal.text}`)
+  }
+
+  /**
+   * 长期层：跨卡片找反复出现的事实。
+   * 只在压缩出新卡片之后跑，避免每次结束都扫全量。
+   */
+  function maybePromoteFacts(entries) {
+    if (!cfg.impressions || !profile) return
+    const facts = findStableFacts(entries)
+    const added = applyStableFacts(profile, facts)
+    if (!added) return
+    saveProfile()
+    log.info(`promoted ${added} stable facts into the profile`)
+  }
 
   /** 所有磁盘写入都走这里：失败只记一次，不刷屏。 */
   function guarded(fn) {
@@ -202,7 +251,7 @@ export function apply(ctx, config = {}) {
   function bufferOf(sessionId) {
     let buf = buffers.get(sessionId)
     if (!buf) {
-      buf = { user: '', assistant: '', turn: 0, step: 1, tools: [] }
+      buf = { user: '', assistant: '', turn: 0, step: 1, tools: [], userLines: [] }
       buffers.set(sessionId, buf)
     }
     return buf
@@ -261,6 +310,8 @@ export function apply(ctx, config = {}) {
     }
 
     guarded(() => writeIndex(root, sessionId, s.index, workspace))
+    // 新卡片落盘后，看看有没有反复出现的事实值得提升为长期印象
+    guarded(() => maybePromoteFacts(s.index.entries))
     log.info(`compacted turns ${card.from}-${card.to} -> "${card.title}"`)
     return card
   }
@@ -331,7 +382,12 @@ export function apply(ctx, config = {}) {
             break
           }
           const text = messageText(event.data)
-          if (text) buf.user = buf.user ? `${buf.user}\n${text}` : text
+          if (text) {
+            buf.user = buf.user ? `${buf.user}\n${text}` : text
+            // 留一小段最近的人话，用来判断「当下的状态」
+            buf.userLines.push(text)
+            if (buf.userLines.length > 12) buf.userLines.shift()
+          }
           break
         }
         case 'assistant/message': {
@@ -369,6 +425,8 @@ export function apply(ctx, config = {}) {
           }
 
           maybeCompact(sessionId, workspace)
+          // 「最近」印象：看这一轮的语气有没有时间/状态线索（内部有一小时节流）
+          guarded(() => maybeUpdateRecent(buf))
           buf.user = ''
           buf.assistant = ''
           break

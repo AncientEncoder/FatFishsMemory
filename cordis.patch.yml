@@ -19,6 +19,10 @@
         hotMemoryEntries: 8
         # 卡片保留上限：超出的挪进 archive/（只移动，不删）
         maxCards: 300
+        # 自动更新画像印象：「最近」看当下语气，「长期」看反复出现
+        impressions: true
+        # 「最近」最多多久更新一次（毫秒），默认一小时
+        recentEveryMs: 3600000
         # 换 dataDir 时是否自动从旧目录复制数据
         migrate: true
         # 调试日志：日常/发布保持 false，排查时改 true

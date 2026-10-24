@@ -83,6 +83,29 @@ DSH 的上下文窗口是 1,048,576 tokens。装满了，最早的对话会被�
 
 **原则：存在本地、人能读、人能改。** 不想要哪条，直接编辑 `profile.json` 删掉。
 
+## 印象怎么更新
+
+画像分两层，**触发方式刻意不同**：
+
+| 层 | 内容 | 触发条件 | 节流 |
+|---|---|---|---|
+| **最近** | 一行当下的状态 | 某轮里同时出现**时间线索**（今天/明天/这周）和**状态线索**（累/烦/开心/期待） | 一小时最多一次 |
+| **长期** | 身份/偏好/习惯/情绪/在做的事 | 压缩出新卡片后，某个事实**在不同卡片里出现 ≥2 次** | 每次压缩后 |
+
+**为什么这么设计**：近期的靠"当下的语气"更新——你说"今天好累"它就该知道；
+长期的靠"反复出现"确认——只出现一次的事不值得写进画像，那是噪音。
+
+两个开关在配置里：`impressions: true`、`recentEveryMs: 3600000`。
+
+也可以手动改：
+
+```powershell
+node tools/remember.mjs show
+node tools/remember.mjs recent "今天心情不错"
+node tools/remember.mjs add preferences "喜欢先看结论"
+node tools/remember.mjs forget recent
+```
+
 ## 状态
 
 - [x] 订阅 `session/event`，按轮把原文写进 `turns.jsonl`
