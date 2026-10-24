@@ -50,3 +50,12 @@ test('null input is safe', () => {
   assert.equal(shouldSeal(null), false)
   assert.equal(sealTask(null), null)
 })
+
+test('a long pending span is capped to the newest turns', () => {
+  const many = Array.from({ length: 40 }, (_, i) => turn(i + 1, `第 ${i + 1} 件事`, i === 39 ? '全部完成' : '继续'))
+  const sealed = sealTask(many, { minTurns: 3, maxTurns: 12 })
+  assert.ok(sealed)
+  assert.equal(sealed.card.span, 12)
+  assert.equal(sealed.to, 40)
+  assert.equal(sealed.from, 29) // 40-12+1
+})

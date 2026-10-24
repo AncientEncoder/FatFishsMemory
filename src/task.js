@@ -28,9 +28,11 @@ export function shouldSeal(turns, { minTurns = DEFAULT_MIN_TURNS } = {}) {
  * 给一段"完整的活"做一张卡。
  * @returns {{card: object, from: number, to: number} | null}
  */
-export function sealTask(turns, { minTurns = DEFAULT_MIN_TURNS, now = new Date() } = {}) {
+export function sealTask(turns, { minTurns = DEFAULT_MIN_TURNS, maxTurns = 12, now = new Date() } = {}) {
   if (!shouldSeal(turns, { minTurns })) return null
-  const slice = turns.slice()
+  // 只按最近这一段封卡：太长的跨度（比如隔了两天没封）不该变成一张巨卡。
+  // 更早的轮次仍然留在 turns.jsonl 里，可检索。
+  const slice = turns.slice(-maxTurns)
   const card = makeCard(slice, {
     from: slice[0]?.turn ?? 0,
     to: slice[slice.length - 1]?.turn ?? 0,
@@ -38,5 +40,6 @@ export function sealTask(turns, { minTurns = DEFAULT_MIN_TURNS, now = new Date()
   })
   card.cut = 'task'
   card.cutScore = 1
+  card.span = slice.length
   return { card, from: card.from, to: card.to }
 }

@@ -47,6 +47,8 @@ export function apply(ctx, config = {}) {
     // 任务级压缩：一件事做完了当场封卡，不等上下文压力
     taskCompaction: true,
     minTurnsPerTask: 3,
+    // 单张任务卡最多覆盖多少轮（防止隔太久后封出一张巨卡）
+    maxTurnsPerTask: 12,
     // 自动更新画像印象：「最近」看当下语气，「长期」看反复出现
     impressions: true,
     // 「最近」最多多久更新一次（毫秒），默认一小时
@@ -381,7 +383,7 @@ export function apply(ctx, config = {}) {
     const pending = turns.filter((t) => t.turn > s.compactedThrough)
     if (pending.length < cfg.minTurnsPerTask) return null
 
-    const sealed = sealTask(pending, { minTurns: cfg.minTurnsPerTask })
+    const sealed = sealTask(pending, { minTurns: cfg.minTurnsPerTask, maxTurns: cfg.maxTurnsPerTask })
     if (!sealed) return null
 
     s.index.entries = s.index.entries || []
