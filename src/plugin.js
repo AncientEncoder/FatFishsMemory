@@ -125,20 +125,21 @@ export function apply(ctx, config = {}) {
 
   /**
    * 「最近」层：看当下的语气。
-   * 只在有新的时间/状态线索时更新，并且一小时最多一次，避免每轮都写。
+   * 节流管的是「多久才允许换一次最近印象」——不是「多久检查一次」。
+   * 所以只有真的写入了才更新时间戳；没命中就什么都不记，下一轮继续看。
    */
   function maybeUpdateRecent(buf) {
     if (!cfg.impressions || !profile) return
-    const last = profile.meta?.lastRecentAt ? Date.parse(profile.meta.lastRecentAt) : 0
+    const lastApplied = profile.meta?.lastRecentAt ? Date.parse(profile.meta.lastRecentAt) : 0
     const now = Date.now()
-    if (Number.isFinite(last) && now - last < cfg.recentEveryMs) return
+    if (Number.isFinite(lastApplied) && lastApplied > 0 && now - lastApplied < cfg.recentEveryMs) return
 
     const signal = detectRecentSignal((buf.userLines || []).map((text) => ({ user: text })))
-    // 没有信号也要落盘时间戳：否则节流只在内存生效，重启就忘了
+    if (!signal) return
+    if (!applyRecentSignal(profile, signal)) return
     profile.meta = { ...(profile.meta || {}), lastRecentAt: new Date(now).toISOString() }
-    const changed = signal ? applyRecentSignal(profile, signal) : false
     saveProfile()
-    if (changed) log.info(`recent updated: ${signal.text}`)
+    log.info(`recent updated: ${signal.text}`)
   }
 
   /**

@@ -1,6 +1,6 @@
 {
   "name": "dsh-fatfish-memory",
-  "version": "0.5.1",
+  "version": "0.5.2",
   "description": "Human-like memory for DSH sessions: pressure-triggered compaction, on-disk archives, and cue-based recall.",
   "type": "module",
   "main": "src/index.js",
