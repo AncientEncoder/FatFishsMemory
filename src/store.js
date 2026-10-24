@@ -1,6 +1,7 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { safeReadJson } from './safety.js'
+import { applyDelta, makeDelta, pickBase } from './delta.js'
 
 function sanitize(value) {
   return String(value ?? '').replace(/[^a-zA-Z0-9._-]/g, '_') || '_'
@@ -32,20 +33,52 @@ export function ensureDir(dir) {
 export function appendTurn(root, sessionId, turn, workspace) {
   const dir = sessionDir(root, sessionId, workspace)
   ensureDir(dir)
-  const line = JSON.stringify(turn) + '\n'
-  fs.appendFileSync(path.join(dir, 'turns.jsonl'), line, 'utf8')
+  const file = path.join(dir, 'turns.jsonl')
+
+  // 冷层增量：和最近的回答比，如果大部分是重复的，只存差异
+  let record = turn
+  try {
+    const recent = readTurns(root, sessionId, workspace).slice(-20)
+    const base = pickBase(
+      recent.filter((t) => typeof t.assistant === 'string' && t.assistant.length > 0)
+        .map((t) => ({ text: t.assistant, turn: t.turn })),
+      turn.assistant,
+    )
+    const delta = base ? makeDelta(base.text, turn.assistant) : null
+    if (delta && base.ref?.turn !== undefined) {
+      record = { ...turn, assistant: undefined, assistantDelta: { base: base.ref.turn, pre: delta.pre, suf: delta.suf, mid: delta.mid } }
+    }
+  } catch { /* 增量失败就老实存原文 */ }
+
+  fs.appendFileSync(file, JSON.stringify(record) + '\n', 'utf8')
 }
 
 export function readTurns(root, sessionId, workspace) {
   const file = path.join(sessionDir(root, sessionId, workspace), 'turns.jsonl')
   if (!fs.existsSync(file)) return []
-  return fs.readFileSync(file, 'utf8')
+  const records = fs.readFileSync(file, 'utf8')
     .split('\n')
     .filter(Boolean)
     .map((line) => {
       try { return JSON.parse(line) } catch { return null }
     })
     .filter(Boolean)
+
+  // 回放增量：assistantDelta 依赖同文件里更早的轮次
+  const byTurn = new Map()
+  const out = []
+  for (const rec of records) {
+    let assistant = rec.assistant
+    if (rec.assistant !== undefined) byTurn.set(rec.turn, rec.assistant)
+    if (rec.assistantDelta) {
+      const baseText = byTurn.get(rec.assistantDelta.base) ?? ''
+      assistant = applyDelta(baseText, rec.assistantDelta)
+      byTurn.set(rec.turn, assistant)
+    }
+    const { assistantDelta, ...rest } = rec
+    out.push({ ...rest, assistant })
+  }
+  return out
 }
 
 export function readIndex(root, sessionId, workspace) {

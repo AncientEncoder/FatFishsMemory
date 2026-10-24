@@ -26,3 +26,31 @@ test('token estimate and pressure', () => {
   assert.ok(estimateTokens('你好世界') > 0)
   assert.equal(pressureOf(524288, 1048576), 0.5)
 })
+
+test('repetitive assistant text is stored as a delta and still reads back', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ffm-'))
+  const head = '这是一段固定开头，用来模拟重复的模板内容。'.repeat(8)
+  const tail = '结尾同样固定，只有中间会变。'.repeat(6)
+  const first = `${head}第一轮的结论在这里${tail}`
+  const second = `${head}第二轮的结论完全不同，长度差不多${tail}`
+
+  appendTurn(root, 's3', { turn: 1, user: '问题一', assistant: first })
+  appendTurn(root, 's3', { turn: 2, user: '问题二', assistant: second })
+
+  const raw = fs.readFileSync(path.join(root, 's3', 'turns.jsonl'), 'utf8').trim().split('\n')
+  const secondRecord = JSON.parse(raw[1])
+  assert.ok(secondRecord.assistantDelta, 'second turn should be delta-encoded')
+
+  const turns = readTurns(root, 's3')
+  assert.equal(turns[1].assistant, second)
+  assert.equal(turns[0].assistant, first)
+})
+
+test('plain turns from older versions still decode', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ffm-'))
+  const dir = path.join(root, 'legacy')
+  fs.mkdirSync(dir, { recursive: true })
+  fs.writeFileSync(path.join(dir, 'turns.jsonl'), JSON.stringify({ turn: 1, user: 'a', assistant: 'b' }) + '\n', 'utf8')
+  const turns = readTurns(root, 'legacy')
+  assert.equal(turns[0].assistant, 'b')
+})

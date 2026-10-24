@@ -229,3 +229,5 @@ compactions.jsonl
 index.json
 fatfish-memory-data/
 *.local.json
+node_modules/
+
