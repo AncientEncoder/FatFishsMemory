@@ -33,6 +33,8 @@ function listSessions() {
     if (!ws.isDirectory() || ws.name.startsWith('_')) continue
     for (const s of fs.readdirSync(path.join(ROOT, ws.name), { withFileTypes: true })) {
       if (!s.isDirectory()) continue
+      // 只认真正有归档的目录（models/ 这种不算会话）
+      if (!fs.existsSync(path.join(ROOT, ws.name, s.name, 'turns.jsonl'))) continue
       out.push({ workspace: ws.name, session: s.name })
     }
   }
