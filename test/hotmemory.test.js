@@ -36,6 +36,28 @@ test('catalog can carry a "how to look it up" hint', () => {
   assert.ok(!buildCatalog(cards).includes('查细节'))
 })
 
+test('catalog can point at the persona file', () => {
+  const text = buildCatalog(cards, { personaLHint: 'C:/x/persona.md' })
+  assert.ok(text.includes('我是谁'))
+  assert.ok(text.includes('persona.md'))
+})
+
+test('both hints survive truncation together', () => {
+  const many = Array.from({ length: 8 }, (_, i) => ({ date: '2026-10-23', title: `很长的记忆条目 ${i}` }))
+  const text = buildCatalog(many, {
+    personaLHint: 'C:/x/persona.md',
+    recallCommand: 'node "/x/tools/recall.mjs" "关键词"',
+    maxChars: 150,
+  })
+  assert.ok(text.includes('我是谁'))
+  assert.ok(text.includes('查细节'))
+})
+
+test('a catalog with only hints (no cards) still renders', () => {
+  const text = buildCatalog([], { personaLHint: 'C:/x/persona.md' })
+  assert.ok(text.includes('我是谁'))
+})
+
 test('tight budget drops cards but keeps the hint', () => {
   const many = Array.from({ length: 6 }, (_, i) => ({ date: '2026-10-23', title: `很长很长的一条记忆 ${i}` }))
   const cmd = 'node "/x/tools/recall.mjs" "关键词"'

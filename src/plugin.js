@@ -71,7 +71,6 @@ export function apply(ctx, config = {}) {
 
   const dshHome = process.env.DSH_HOME || path.join(os.homedir(), '.dsh')
   const defaultRoot = path.join(dshHome, 'fatfish-memory')
-
   // 数据目录可配：没配走默认；配了但不可用就回落并警告，绝不静默降级
   const resolved = resolveDataDir({ configured: cfg.dataDir, fallback: defaultRoot })
   const root = resolved.dir
@@ -96,6 +95,8 @@ export function apply(ctx, config = {}) {
   // A missing or unwritable data directory must degrade to read-only instead of
   // throwing once per turn: someone installing this for the first time should
   // get a working plugin, not a wall of errors.
+  // 人设文件：目录里指路，让"我是谁"和"怎么查"一样随手可得
+  const personaLHint = cfg.persona === false ? '' : path.join(root, 'persona.md')
   let profile = null
   const dirReady = ensureDataDir(root)
   const writable = dirReady && probeWrite(root)
@@ -202,7 +203,7 @@ export function apply(ctx, config = {}) {
     if (!cfg.hotMemory) return
     const s = stateOf(sessionId, workspace)
     const entries = s.index.entries || []
-    const text = buildCatalog(entries, { maxEntries: cfg.hotMemoryEntries, recallCommand })
+    const text = buildCatalog(entries, { maxEntries: cfg.hotMemoryEntries, recallCommand, personaLHint })
     if (!text) return
 
     const id = catalogId(text)

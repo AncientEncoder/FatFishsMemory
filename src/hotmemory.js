@@ -8,32 +8,36 @@
  * 目标：不超过 200 token，宁短勿长——它每轮都要占着上下文。
  */
 
-export function buildCatalog(cards, { maxEntries = 8, maxChars = 600, recallCommand = '' } = {}) {
+export function buildCatalog(cards, { maxEntries = 8, maxChars = 600, recallCommand = '', personaLHint = '' } = {}) {
   const list = (cards || []).filter(Boolean)
-  if (list.length === 0) return ''
+  if (list.length === 0 && !recallCommand && !personaLHint) return ''
 
   const recent = list.slice(-maxEntries)
-  const lines = ['[记忆目录] 你之前经历过这些（细节需要时再查）：']
+  const head = '[记忆目录] 你之前经历过这些（细节需要时再查）：'
+  const items = []
   for (const card of recent) {
     const title = String(card.title || '').trim()
     if (!title) continue
     const date = card.date ? `${card.date} ` : ''
-    lines.push(`- ${date}${title}`)
+    items.push(`- ${date}${title}`)
   }
-  if (lines.length === 1) return ''
-  // 告诉它"怎么查"——只说"可以查"是不够的，模型不会自己猜命令
-  if (recallCommand) lines.push(`（查细节：${recallCommand}）`)
+  // 两条"提示"永远保留：我是谁、怎么查。列表被挤掉也要留着它们。
+  const hints = []
+  if (personaLHint) hints.push(`（我是谁：${personaLHint}）`)
+  if (recallCommand) hints.push(`（查细节：${recallCommand}）`)
 
-  let text = lines.join('\n')
-  if (text.length > maxChars) {
-    // 从末尾截断：最近的记忆更重要（但保留"怎么查"那一行）
-    const head = lines[0]
-    const hint = recallCommand ? lines[lines.length - 1] : null
-    const body = lines.slice(1, hint ? lines.length - 1 : lines.length)
-    while (body.length > 0 && [head, ...body, hint].filter(Boolean).join('\n').length > maxChars) body.shift()
-    text = [head, ...body, hint].filter(Boolean).join('\n')
+  if (items.length === 0 && hints.length === 0) return ''
+
+  // 先占住提示，剩下的预算再放卡片（最近的优先）
+  const fixed = [head, ...hints].join('\n').length
+  const body = []
+  for (let i = items.length - 1; i >= 0; i -= 1) {
+    const next = [head, items[i], ...body, ...hints].join('\n')
+    if (next.length > maxChars && body.length > 0) break
+    body.unshift(items[i])
+    if (next.length >= maxChars && body.length > 0 && fixed >= maxChars) break
   }
-  return text
+  return [head, ...body, ...hints].join('\n')
 }
 
 /** 内容指纹：目录变了才值得再注入一次。 */

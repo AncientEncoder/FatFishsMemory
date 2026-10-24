@@ -135,9 +135,13 @@ test('catalog is injected at step/start when a system prompt already exists', as
 
 test('catalog is not injected when the session already has a persisted catalog', async () => {
   const cards = [{ date: '2026-10-23', from: 1, to: 1, title: '旧记忆', points: [], keywords: [] }]
+  // 两次跑必须共用同一个数据目录，否则 persona/recall 提示里的绝对路径不同，
+  // 内容指纹自然也不同——那不是"重复注入"，是两个不同的目录。
+  const sharedDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ffm-shared-'))
+  const shared = { dataDir: sharedDir, migrate: false }
 
   // 先跑一次，拿到插件实际生成的 id（不要自己拼，免得内部细节变了测试就碎）
-  const first = harness()
+  const first = harness(shared)
   seedIndex(first.dir, cards)
   first.emit('step/start', { turn: 1, step: 1 })
   first.emit('system/message', {
@@ -156,7 +160,7 @@ test('catalog is not injected when the session already has a persisted catalog',
       ? { type: 'system/message', data: { message: { id: injectedId, content: [] } } }
       : { type: 'system/message' },
   }
-  const second = harness({}, session)
+  const second = harness(shared, session)
   seedIndex(second.dir, cards)
   second.emit('step/start', { turn: 2, step: 1 })
   await new Promise((resolve) => queueMicrotask(resolve))
@@ -183,7 +187,7 @@ test('catalog is not injected twice in one session', async () => {
   assert.equal(appends.filter((a) => a.event === 'system/message').length, 1)
 })
 
-test('no catalog is injected when there are no cards', async () => {
+test('with no cards the catalog still points at persona and recall', async () => {
   const { emit, appends } = harness()
   emit('step/start', { turn: 3, step: 1 })
   emit('system/message', {
@@ -192,7 +196,13 @@ test('no catalog is injected when there are no cards', async () => {
     message: { id: 'sp-3', role: 'system', source: { kind: 'system-prompt' }, content: [{ type: 'text', text: 'prompt' }] },
   })
   await new Promise((resolve) => queueMicrotask(resolve))
-  assert.equal(appends.filter((a) => a.event === 'system/message').length, 0)
+
+  const injected = appends.filter((a) => a.event === 'system/message')
+  assert.equal(injected.length, 1)
+  const text = injected[0].data.message.content[0].text
+  assert.ok(text.includes('我是谁'))
+  assert.ok(text.includes('查细节'))
+  assert.ok(!text.includes('- 2026'), 'no card lines yet')
 })
 
 test('tool calls are recorded per turn for card actions', () => {
