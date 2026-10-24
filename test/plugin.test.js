@@ -196,3 +196,27 @@ test('tool calls are recorded per turn for card actions', () => {
   const turns = readTurns(dir, 'sess-1', 'proj')
   assert.deepEqual(turns[0].tools, ['pwsh', 'read'])
 })
+
+test('recent impression is updated at turn end when a mood cue appears', () => {
+  const { dir, emit } = harness()
+  emit('turn/start', { turn: 1 })
+  emit('user/message', userMsg('今天打了一天战争雷霆，好累'))
+  emit('assistant/message', assistantMsg(1, '早点休息'))
+  emit('turn/end', { turn: 1 })
+
+  const profile = JSON.parse(fs.readFileSync(path.join(dir, 'profile.json'), 'utf8'))
+  assert.ok(profile.meta?.lastRecentAt, 'throttle timestamp must be persisted')
+  assert.match(profile.sections.recent[0].text, /战争雷霆/)
+})
+
+test('recent impression is not overwritten by a plain line', () => {
+  const { dir, emit } = harness()
+  emit('turn/start', { turn: 1 })
+  emit('user/message', userMsg('把 README 的章节改一下'))
+  emit('assistant/message', assistantMsg(1, '好'))
+  emit('turn/end', { turn: 1 })
+
+  const profile = JSON.parse(fs.readFileSync(path.join(dir, 'profile.json'), 'utf8'))
+  assert.equal(profile.sections.recent.length, 0)
+  assert.ok(profile.meta?.lastRecentAt)
+})

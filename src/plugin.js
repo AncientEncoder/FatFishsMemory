@@ -134,12 +134,11 @@ export function apply(ctx, config = {}) {
     if (Number.isFinite(last) && now - last < cfg.recentEveryMs) return
 
     const signal = detectRecentSignal((buf.userLines || []).map((text) => ({ user: text })))
-    // 没有信号也要打时间戳：避免每轮都重新扫一遍
+    // 没有信号也要落盘时间戳：否则节流只在内存生效，重启就忘了
     profile.meta = { ...(profile.meta || {}), lastRecentAt: new Date(now).toISOString() }
-    if (!signal) return
-    if (!applyRecentSignal(profile, signal)) return
+    const changed = signal ? applyRecentSignal(profile, signal) : false
     saveProfile()
-    log.info(`recent updated: ${signal.text}`)
+    if (changed) log.info(`recent updated: ${signal.text}`)
   }
 
   /**
