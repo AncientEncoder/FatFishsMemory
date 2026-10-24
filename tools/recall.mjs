@@ -70,12 +70,12 @@ for (const target of targets) {
 
   console.log(`\n=== ${target.workspace} / ${target.session} （${turns.length} 轮）===`)
   for (const hit of cardHits) {
-    console.log(`  [卡] ${hit.card.date} ${hit.card.title}  (score ${hit.score})`)
+    console.log(`  [卡] ${hit.card.date} ${hit.card.title}  (${hit.score.toFixed(1)})`)
     for (const p of (hit.card.points || []).slice(0, 2)) console.log(`        · ${p}`)
   }
   for (const hit of turnHits) {
     const when = hit.ts ? new Date(hit.ts).toLocaleString('zh-CN') : '-'
-    console.log(`  [轮 ${hit.turn}] ${when}  (score ${hit.score})`)
+    console.log(`  [轮 ${hit.turn}] ${when}  (${hit.score.toFixed(1)})`)
     console.log(`        ${snippet(hit.text, query)}`)
   }
 }
