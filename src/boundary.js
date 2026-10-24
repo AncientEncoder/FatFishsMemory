@@ -16,6 +16,11 @@ import { keywordsOf } from './compact.js'
 const COMPLETION = /(完成|已就绪|搞定了|搞定|好了|结束了|通过了|都行|OK|done|fixed|works)/iu
 const GAP_MS = 20 * 60 * 1000
 
+/** 任务是否收尾——"目标达成即封卡"用它判断。 */
+export function isCompletion(text) {
+  return COMPLETION.test(String(text || ''))
+}
+
 function textOf(turn) {
   return `${turn?.user || ''} ${turn?.assistant || ''}`
 }

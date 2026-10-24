@@ -23,6 +23,13 @@
         impressions: true
         # 「最近」最多多久更新一次（毫秒），默认一小时
         recentEveryMs: 3600000
+        # 任务级压缩：一件事做完了当场封卡，不等压力
+        taskCompaction: true
+        # 至少攒够多少轮才算"一件完整的事"
+        minTurnsPerTask: 3
+        # 自动查表：回指过去的问题，先翻温层和冷层
+        autoRecall: true
+        autoRecallMax: 3
         # 换 dataDir 时是否自动从旧目录复制数据
         migrate: true
         # 调试日志：日常/发布保持 false，排查时改 true

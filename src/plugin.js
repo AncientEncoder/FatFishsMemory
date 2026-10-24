@@ -15,6 +15,7 @@ import { buildCatalog, buildCatalogMessage, catalogId } from './hotmemory.js'
 import { findBoundary } from './boundary.js'
 import { splitForRetention } from './retention.js'
 import { buildRecallDigest, hasRecallCue, hitsIndex } from './autorecall.js'
+import { sealTask } from './task.js'
 
 const DEFAULT_WINDOW = 1048576
 
@@ -43,6 +44,9 @@ export function apply(ctx, config = {}) {
     // 自动查表：回指过去的问题，先翻温层和冷层再回答
     autoRecall: true,
     autoRecallMax: 3,
+    // 任务级压缩：一件事做完了当场封卡，不等上下文压力
+    taskCompaction: true,
+    minTurnsPerTask: 3,
     // 自动更新画像印象：「最近」看当下语气，「长期」看反复出现
     impressions: true,
     // 「最近」最多多久更新一次（毫秒），默认一小时
@@ -366,6 +370,42 @@ export function apply(ctx, config = {}) {
     return card
   }
 
+  /**
+   * 任务级压缩：这一轮的回答明确收尾，而且攒够了几轮，就当场封卡。
+   * 不等压力阈值——"这件事做完了"本身就是最好的压缩时机。
+   */
+  function maybeSealTask(sessionId, workspace) {
+    if (!cfg.taskCompaction) return null
+    const s = stateOf(sessionId, workspace)
+    const turns = readTurns(root, sessionId, workspace)
+    const pending = turns.filter((t) => t.turn > s.compactedThrough)
+    if (pending.length < cfg.minTurnsPerTask) return null
+
+    const sealed = sealTask(pending, { minTurns: cfg.minTurnsPerTask })
+    if (!sealed) return null
+
+    s.index.entries = s.index.entries || []
+    s.index.entries.push(sealed.card)
+    s.compactedThrough = sealed.to
+    s.index.compactedThrough = sealed.to
+    s.tokens = turns
+      .filter((t) => t.turn > sealed.to)
+      .reduce((sum, t) => sum + estimateTokens(`${t.user} ${t.assistant}`), 0)
+    s.index.estimatedTokens = s.tokens
+    s.index.lastTurn = s.turn
+
+    const { kept, dropped } = splitForRetention(s.index.entries, { maxCards: cfg.maxCards })
+    if (dropped.length) {
+      s.index.entries = kept
+      guarded(() => archiveCards(root, sessionId, dropped, workspace))
+    }
+
+    guarded(() => writeIndex(root, sessionId, s.index, workspace))
+    guarded(() => maybePromoteFacts(s.index.entries))
+    log.info(`task sealed: turns ${sealed.from}-${sealed.to} -> "${sealed.card.title}"`)
+    return sealed.card
+  }
+
   // 记忆注入已下线。
   //
   // 曾经用 session.append('agent/inbox/spliced', ...) 把画像塞进下一轮，
@@ -480,6 +520,8 @@ export function apply(ctx, config = {}) {
           }
 
           maybeCompact(sessionId, workspace)
+          // 任务级压缩：这件事收尾了就当场封卡（不等压力）
+          guarded(() => maybeSealTask(sessionId, workspace))
           // 「最近」印象：看这一轮的语气有没有时间/状态线索（内部有一小时节流）
           guarded(() => maybeUpdateRecent(buf))
           buf.user = ''

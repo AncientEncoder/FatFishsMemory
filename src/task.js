@@ -1,0 +1,42 @@
+import { isCompletion } from './boundary.js'
+import { makeCard } from './compact.js'
+
+/**
+ * 任务级压缩：一件事做完了，当场封卡，不等上下文压力。
+ *
+ * 判定"一件事"的规则（刻意保守）：
+ *   1. 这一轮的回答明确收尾（完成/搞定/通过了…）
+ *   2. 从上一个封卡点起，至少攒了 minTurns 轮
+ *   3. 这段时间里用户说过话（不是纯工具空转）
+ *
+ * 不满足就继续攒——宁可晚点封，也不要封出一堆半截卡。
+ */
+
+export const DEFAULT_MIN_TURNS = 3
+
+export function shouldSeal(turns, { minTurns = DEFAULT_MIN_TURNS } = {}) {
+  const list = Array.isArray(turns) ? turns : []
+  if (list.length < minTurns) return false
+  const last = list[list.length - 1]
+  if (!last?.assistant) return false
+  if (!isCompletion(last.assistant)) return false
+  // 至少有一轮用户真正说过话
+  return list.some((t) => (t.user || '').trim().length > 0)
+}
+
+/**
+ * 给一段"完整的活"做一张卡。
+ * @returns {{card: object, from: number, to: number} | null}
+ */
+export function sealTask(turns, { minTurns = DEFAULT_MIN_TURNS, now = new Date() } = {}) {
+  if (!shouldSeal(turns, { minTurns })) return null
+  const slice = turns.slice()
+  const card = makeCard(slice, {
+    from: slice[0]?.turn ?? 0,
+    to: slice[slice.length - 1]?.turn ?? 0,
+    now,
+  })
+  card.cut = 'task'
+  card.cutScore = 1
+  return { card, from: card.from, to: card.to }
+}
