@@ -16,6 +16,7 @@ import { findBoundary } from './boundary.js'
 import { splitForRetention } from './retention.js'
 import { buildRecallDigest, hasRecallCue, hitsIndex } from './autorecall.js'
 import { sealTask } from './task.js'
+import { healIndex } from './heal.js'
 
 const DEFAULT_WINDOW = 1048576
 
@@ -318,12 +319,16 @@ export function apply(ctx, config = {}) {
     let s = state.get(sessionId)
     if (!s) {
       const index = readIndex(root, sessionId, workspace)
+      // 自愈：老版本留下的"超大任务卡"（没有 span 且跨度超过上限）在建状态时清掉，
+      // 并把游标退回到它的起点，让后面的封卡重新算。
+      const healed = healIndex(index, cfg.maxTurnsPerTask)
       s = {
-        index,
+        index: healed.index,
         turn: index.lastTurn ?? 0,
-        compactedThrough: index.compactedThrough ?? 0,
+        compactedThrough: healed.compactedThrough,
         tokens: index.estimatedTokens ?? 0,
       }
+      if (healed.changed) guarded(() => writeIndex(root, sessionId, healed.index, workspace))
       state.set(sessionId, s)
     }
     return s
