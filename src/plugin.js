@@ -18,6 +18,7 @@ import { buildRecallDigest, countIndexHits, hasRecallCue } from './autorecall.js
 import { sealOverflow, sealTask } from './task.js'
 import { healIndex } from './heal.js'
 import { isWeakTitle, retitleIndex } from './retitle.js'
+import { fillGaps } from './backfill.js'
 
 const DEFAULT_WINDOW = 1048576
 
@@ -353,6 +354,13 @@ export function apply(ctx, config = {}) {
           guarded(() => writeIndex(root, sessionId, s.index, workspace))
         }
       }
+      // 再补历史缺口：以前"只封最近 N 轮"跳过的那些，压成 fallback 卡
+      const filled = fillGaps(s.index, s.turns, { maxTurns: cfg.maxTurnsPerTask })
+      if (filled.changed) {
+        s.index = filled.index
+        guarded(() => writeIndex(root, sessionId, s.index, workspace))
+        log.info(`backfilled ${filled.changed} gap cards`)
+      }
     }
     return s.turns
   }
@@ -409,18 +417,31 @@ export function apply(ctx, config = {}) {
     if (!cfg.taskCompaction) return null
     const s = stateOf(sessionId, workspace)
     const turns = turnsOf(sessionId, workspace)
-    const pending = turns.filter((t) => t.turn > s.compactedThrough)
+    let pending = turns.filter((t) => t.turn > s.compactedThrough)
     if (pending.length < cfg.minTurnsPerTask) return null
 
-    // 优先按"任务完成"封卡；攒太多还没等到完成语（比如一直闲聊），兜底封一张
-    const sealed = sealTask(pending, { minTurns: cfg.minTurnsPerTask, maxTurns: cfg.maxTurnsPerTask })
+    const cards = []
+    // 先补：超过单卡上限的陈旧轮次，按顺序封成 fallback 卡。
+    // 否则"只封最近 N 轮"会留下永久缺口。
+    while (pending.length > cfg.maxTurnsPerTask && cards.length < 4) {
+      const chunk = sealOverflow(pending.slice(0, cfg.maxTurnsPerTask), { maxTurns: cfg.maxTurnsPerTask })
+      if (!chunk) break
+      cards.push(chunk)
+      s.compactedThrough = chunk.to
+      pending = turns.filter((t) => t.turn > s.compactedThrough)
+    }
+
+    // 再封：按"任务完成"封最近这段；攒太多还没等到完成语，就兜底
+    const head = sealTask(pending, { minTurns: cfg.minTurnsPerTask, maxTurns: cfg.maxTurnsPerTask })
       ?? (pending.length > cfg.maxPendingTurns
         ? sealOverflow(pending, { maxTurns: cfg.maxTurnsPerTask })
         : null)
-    if (!sealed) return null
+    if (head) cards.push(head)
+    if (!cards.length) return null
+    const sealed = cards[cards.length - 1]
 
     s.index.entries = s.index.entries || []
-    s.index.entries.push(sealed.card)
+    for (const c of cards) s.index.entries.push(c.card)
     s.compactedThrough = sealed.to
     s.index.compactedThrough = sealed.to
     s.tokens = turns

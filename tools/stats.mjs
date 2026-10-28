@@ -79,14 +79,16 @@ for (const s of list) {
   for (const c of cards) byCut[c.cut || '(早期)'] = (byCut[c.cut || '(早期)'] || 0) + 1
   console.log('切法: ' + Object.entries(byCut).map(([k, v]) => `${k}=${v}`).join('  '))
 
-  // 覆盖：卡片覆盖了多少轮
+  // 覆盖：只算"真实存在的轮次"被覆盖了多少（turn 号可能有空洞）
   const covered = new Set()
   for (const c of cards) {
     for (let i = Number(c.from); i <= Number(c.to); i++) covered.add(i)
   }
   const allTurns = turns.map((t) => t.turn)
   const gaps = allTurns.filter((n) => !covered.has(n))
-  console.log(`覆盖 ${covered.size}/${allTurns.length} 轮` + (gaps.length ? ` | 未覆盖 ${gaps.length} 轮` : ' | 无缺口'))
+  const hit = allTurns.length - gaps.length
+  const pct = allTurns.length ? Math.round((hit / allTurns.length) * 100) : 100
+  console.log(`覆盖 ${hit}/${allTurns.length} 轮（${pct}%）` + (gaps.length ? ` | 未覆盖 ${gaps.length} 轮` : ' | 无缺口'))
 
   // 缺口分段
   if (gaps.length) {
