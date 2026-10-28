@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { shouldSeal, sealTask } from '../src/task.js'
+import { shouldSeal, sealTask, sealOverflow } from '../src/task.js'
 
 const turn = (n, user, assistant) => ({ turn: n, user, assistant, ts: 1700000000000 + n })
 
@@ -58,4 +58,20 @@ test('a long pending span is capped to the newest turns', () => {
   assert.equal(sealed.card.span, 12)
   assert.equal(sealed.to, 40)
   assert.equal(sealed.from, 29) // 40-12+1
+})
+
+test('overflow seal works when there is no completion cue at all', () => {
+  const chat = Array.from({ length: 20 }, (_, i) => turn(i + 1, `闲聊第 ${i + 1} 句`, '嗯'))
+  assert.equal(sealTask(chat, { minTurns: 3 }), null) // 没有完成语 → 正常路径不封
+  const sealed = sealOverflow(chat, { maxTurns: 12 })
+  assert.ok(sealed)
+  assert.equal(sealed.card.cut, 'fallback')
+  assert.equal(sealed.card.span, 12)
+  assert.equal(sealed.to, 20)
+  assert.equal(sealed.from, 9)
+})
+
+test('overflow seal handles empty input', () => {
+  assert.equal(sealOverflow([]), null)
+  assert.equal(sealOverflow(null), null)
 })

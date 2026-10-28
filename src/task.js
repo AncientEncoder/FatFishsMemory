@@ -43,3 +43,24 @@ export function sealTask(turns, { minTurns = DEFAULT_MIN_TURNS, maxTurns = 12, n
   card.span = slice.length
   return { card, from: card.from, to: card.to }
 }
+
+/**
+ * 兜底封卡：待压缩的轮次攒太多了（比如一直闲聊、从没出现完成语），
+ * 也强行封一张，否则这段永远不会有摘要。
+ *
+ * 标记 cut='fallback'，跟"按边界对半切"一个待遇——**承认它切得不讲究**。
+ */
+export function sealOverflow(turns, { maxTurns = 12, now = new Date() } = {}) {
+  const list = Array.isArray(turns) ? turns : []
+  if (list.length === 0) return null
+  const slice = list.slice(-maxTurns)
+  const card = makeCard(slice, {
+    from: slice[0]?.turn ?? 0,
+    to: slice[slice.length - 1]?.turn ?? 0,
+    now,
+  })
+  card.cut = 'fallback'
+  card.cutScore = 0
+  card.span = slice.length
+  return { card, from: card.from, to: card.to }
+}

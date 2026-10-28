@@ -15,7 +15,7 @@ import { buildCatalog, buildCatalogMessage, catalogId } from './hotmemory.js'
 import { findBoundary } from './boundary.js'
 import { splitForRetention } from './retention.js'
 import { buildRecallDigest, hasRecallCue, hitsIndex } from './autorecall.js'
-import { sealTask } from './task.js'
+import { sealOverflow, sealTask } from './task.js'
 import { healIndex } from './heal.js'
 
 const DEFAULT_WINDOW = 1048576
@@ -50,6 +50,8 @@ export function apply(ctx, config = {}) {
     minTurnsPerTask: 3,
     // 单张任务卡最多覆盖多少轮（防止隔太久后封出一张巨卡）
     maxTurnsPerTask: 12,
+    // 兜底：待封轮数超过这个值就强制封卡（闲聊永远等不到"完成语"）
+    maxPendingTurns: 30,
     // 自动更新画像印象：「最近」看当下语气，「长期」看反复出现
     impressions: true,
     // 「最近」最多多久更新一次（毫秒），默认一小时
@@ -389,7 +391,11 @@ export function apply(ctx, config = {}) {
     const pending = turns.filter((t) => t.turn > s.compactedThrough)
     if (pending.length < cfg.minTurnsPerTask) return null
 
+    // 优先按"任务完成"封卡；攒太多还没等到完成语（比如一直闲聊），兜底封一张
     const sealed = sealTask(pending, { minTurns: cfg.minTurnsPerTask, maxTurns: cfg.maxTurnsPerTask })
+      ?? (pending.length > cfg.maxPendingTurns
+        ? sealOverflow(pending, { maxTurns: cfg.maxTurnsPerTask })
+        : null)
     if (!sealed) return null
 
     s.index.entries = s.index.entries || []
