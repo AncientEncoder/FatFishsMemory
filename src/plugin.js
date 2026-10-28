@@ -17,6 +17,7 @@ import { splitForRetention } from './retention.js'
 import { buildRecallDigest, countIndexHits, hasRecallCue } from './autorecall.js'
 import { sealOverflow, sealTask } from './task.js'
 import { healIndex } from './heal.js'
+import { isWeakTitle, retitleIndex } from './retitle.js'
 
 const DEFAULT_WINDOW = 1048576
 
@@ -342,7 +343,17 @@ export function apply(ctx, config = {}) {
   /** 取某个会话的轮次（内存缓存，冷启动时才读盘）。 */
   function turnsOf(sessionId, workspace) {
     const s = stateOf(sessionId, workspace)
-    if (!Array.isArray(s.turns)) s.turns = readTurns(root, sessionId, workspace)
+    if (!Array.isArray(s.turns)) {
+      s.turns = readTurns(root, sessionId, workspace)
+      // 顺手把"来吧""要"这类短标题修掉（只修一次，改完写回）
+      if ((s.index.entries || []).some((c) => isWeakTitle(c.title))) {
+        const fixed = retitleIndex(s.index, s.turns)
+        if (fixed.changed) {
+          s.index = fixed.index
+          guarded(() => writeIndex(root, sessionId, s.index, workspace))
+        }
+      }
+    }
     return s.turns
   }
 
