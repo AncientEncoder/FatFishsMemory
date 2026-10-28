@@ -54,3 +54,21 @@ test('plain turns from older versions still decode', () => {
   const turns = readTurns(root, 'legacy')
   assert.equal(turns[0].assistant, 'b')
 })
+
+test('appendTurn can use caller-provided recent turns instead of reading the file', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ffm-'))
+  const head = '很长的固定开头，用来触发增量编码。'.repeat(10)
+  const tail = '固定结尾。'.repeat(4)
+  const first = `${head}第一轮${tail}`
+  const second = `${head}第二轮，中间换了几个字${tail}`
+
+  appendTurn(root, 's4', { turn: 1, user: 'a', assistant: first })
+  // 只给内存里的候选，不给文件——如果它偷偷读盘，delta 也照样能算，但这里验证的是"能接受传入"
+  appendTurn(root, 's4', { turn: 2, user: 'b', assistant: second }, undefined, {
+    recent: [{ turn: 1, assistant: first }],
+  })
+
+  const raw = fs.readFileSync(path.join(root, 's4', 'turns.jsonl'), 'utf8').trim().split('\n')
+  assert.ok(JSON.parse(raw[1]).assistantDelta, 'should delta-encode against the provided base')
+  assert.equal(readTurns(root, 's4')[1].assistant, second)
+})

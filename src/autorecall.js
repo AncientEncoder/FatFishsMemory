@@ -34,13 +34,23 @@ export function entitiesOf(text) {
 
 /** 查询是否命中目录里已有的卡片（实体级别）。 */
 export function hitsIndex(cards, query) {
+  return countIndexHits(cards, query) > 0
+}
+
+/**
+ * 命中目录的"独立关键词"个数。
+ * 单个关键词命中太容易（比如"重启"），会带来大量噪音；
+ * 没有回指线索时，至少要命中 2 个才算"真在说那件事"。
+ */
+export function countIndexHits(cards, query) {
   const ents = entitiesOf(query)
-  if (!ents.size) return false
+  if (!ents.size) return 0
+  const matched = new Set()
   for (const card of cards || []) {
     const text = `${card.title || ''} ${(card.keywords || []).join(' ')}`.toLowerCase()
-    for (const e of ents) if (text.includes(e)) return true
+    for (const e of ents) if (text.includes(e)) matched.add(e)
   }
-  return false
+  return matched.size
 }
 
 /**

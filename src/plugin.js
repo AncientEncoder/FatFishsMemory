@@ -14,7 +14,7 @@ import { isRuntimeContext, messageText, turnNumber } from './message.js'
 import { buildCatalog, buildCatalogMessage, catalogId } from './hotmemory.js'
 import { findBoundary } from './boundary.js'
 import { splitForRetention } from './retention.js'
-import { buildRecallDigest, hasRecallCue, hitsIndex } from './autorecall.js'
+import { buildRecallDigest, countIndexHits, hasRecallCue } from './autorecall.js'
 import { sealOverflow, sealTask } from './task.js'
 import { healIndex } from './heal.js'
 
@@ -242,13 +242,14 @@ export function apply(ctx, config = {}) {
 
     const s = stateOf(sessionId, workspace)
     const cards = s.index.entries || []
-    // 第一道闸：不像在问过去、也没命中目录实体，直接跳过（省一次全量读取）
-    if (!hasRecallCue(query) && !hitsIndex(cards, query)) return
+    // 第一道闸：有回指线索才查；没有线索时，至少命中 2 个目录关键词才算数
+    // （单个关键词太容易撞上，比如"重启"——那只会带来噪音）
+    if (!hasRecallCue(query) && countIndexHits(cards, query) < 2) return
     recallInjected.set(sessionId, turn)
 
     defer(() => {
       try {
-        const recent = readTurns(root, sessionId, workspace).slice(-200)
+        const recent = turnsOf(sessionId, workspace).slice(-200)
         const { text } = buildRecallDigest(query, { cards, turns: recent, limit: cfg.autoRecallMax })
         if (!text) return
         session.append('system/message', {
@@ -329,11 +330,20 @@ export function apply(ctx, config = {}) {
         turn: index.lastTurn ?? 0,
         compactedThrough: healed.compactedThrough,
         tokens: index.estimatedTokens ?? 0,
+        // 内存里的轮次缓存：懒加载，之后每轮追加，避免每轮全量读 turns.jsonl
+        turns: null,
       }
       if (healed.changed) guarded(() => writeIndex(root, sessionId, healed.index, workspace))
       state.set(sessionId, s)
     }
     return s
+  }
+
+  /** 取某个会话的轮次（内存缓存，冷启动时才读盘）。 */
+  function turnsOf(sessionId, workspace) {
+    const s = stateOf(sessionId, workspace)
+    if (!Array.isArray(s.turns)) s.turns = readTurns(root, sessionId, workspace)
+    return s.turns
   }
 
   function maybeCompact(sessionId, workspace) {
@@ -342,7 +352,7 @@ export function apply(ctx, config = {}) {
     const pressure = pressureOf(s.tokens, s.index.window ?? DEFAULT_WINDOW)
     if (pressure < cfg.compactAt) return null
 
-    const turns = readTurns(root, sessionId, workspace)
+    const turns = turnsOf(sessionId, workspace)
     const pending = turns.filter((t) => t.turn > s.compactedThrough)
     if (pending.length < cfg.minTurnsPerCard) return null
 
@@ -387,7 +397,7 @@ export function apply(ctx, config = {}) {
   function maybeSealTask(sessionId, workspace) {
     if (!cfg.taskCompaction) return null
     const s = stateOf(sessionId, workspace)
-    const turns = readTurns(root, sessionId, workspace)
+    const turns = turnsOf(sessionId, workspace)
     const pending = turns.filter((t) => t.turn > s.compactedThrough)
     if (pending.length < cfg.minTurnsPerTask) return null
 
@@ -515,7 +525,14 @@ export function apply(ctx, config = {}) {
             assistant: buf.assistant,
             tools: [...new Set(buf.tools)],
           }
-          if (cfg.archiveTurns) guarded(() => appendTurn(root, sessionId, turn, workspace))
+          if (cfg.archiveTurns) {
+            // 把内存里的最近轮次当增量基准，省掉每次追加都全量读文件
+            const cached = stateOf(sessionId, workspace).turns
+            const recent = Array.isArray(cached) ? cached.slice(-20) : undefined
+            guarded(() => appendTurn(root, sessionId, turn, workspace, { recent }))
+            // 同步进内存缓存（没加载过就不管，下一次读盘时会自然带上）
+            if (Array.isArray(cached)) cached.push(turn)
+          }
 
           const s = stateOf(sessionId, workspace)
           s.turn = buf.turn

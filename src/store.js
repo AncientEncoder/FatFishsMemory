@@ -30,17 +30,18 @@ export function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true })
 }
 
-export function appendTurn(root, sessionId, turn, workspace) {
+export function appendTurn(root, sessionId, turn, workspace, { recent } = {}) {
   const dir = sessionDir(root, sessionId, workspace)
   ensureDir(dir)
   const file = path.join(dir, 'turns.jsonl')
 
   // 冷层增量：和最近的回答比，如果大部分是重复的，只存差异
+  // recent 由调用方传入（内存里的最近轮次），省掉每次追加都全量读文件
   let record = turn
   try {
-    const recent = readTurns(root, sessionId, workspace).slice(-20)
+    const candidates = (Array.isArray(recent) ? recent : readTurns(root, sessionId, workspace)).slice(-20)
     const base = pickBase(
-      recent.filter((t) => typeof t.assistant === 'string' && t.assistant.length > 0)
+      candidates.filter((t) => typeof t.assistant === 'string' && t.assistant.length > 0)
         .map((t) => ({ text: t.assistant, turn: t.turn })),
       turn.assistant,
     )

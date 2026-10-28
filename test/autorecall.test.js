@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { hasRecallCue, entitiesOf, hitsIndex, buildRecallDigest } from '../src/autorecall.js'
+import { hasRecallCue, entitiesOf, hitsIndex, countIndexHits, buildRecallDigest } from '../src/autorecall.js'
 
 const cards = [
   { date: '2026-10-23', title: '白屏事故：手改 package.json', keywords: ['白屏', '插件', '重启'] },
@@ -26,6 +26,12 @@ test('entity extraction skips stop words', () => {
 test('index hit is entity based', () => {
   assert.equal(hitsIndex(cards, '白屏又出现了'), true)
   assert.equal(hitsIndex(cards, '今天天气不错'), false)
+})
+
+test('a single keyword hit is not enough on its own', () => {
+  // "重启"只命中一个关键词——这就是之前噪音的来源
+  assert.equal(countIndexHits(cards, '重启好了，可以聊聊天'), 1)
+  assert.equal(countIndexHits(cards, '白屏那次插件重启'), 3)
 })
 
 test('no cue and no index hit means no lookup', () => {
