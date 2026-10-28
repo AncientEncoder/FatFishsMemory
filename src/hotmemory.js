@@ -17,7 +17,8 @@ export function buildCatalog(cards, { maxEntries = 8, maxChars = 600, recallComm
   const items = []
   for (const card of recent) {
     const title = String(card.title || '').trim()
-    if (!title) continue
+    // 标题太短的多半是"来吧""要""35米"这种，放进目录只会浪费字数
+    if (!title || title.length < 4 || title === '(无标题)') continue
     const date = card.date ? `${card.date} ` : ''
     items.push(`- ${date}${title}`)
   }

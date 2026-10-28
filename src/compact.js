@@ -42,6 +42,31 @@ export function keywordsOf(text, limit = 8) {
 }
 
 /**
+ * 挑标题：优先"有信息量"的那句，而不是第一句。
+ *
+ * 用户经常先来一句"来吧""要""35米"，把它当标题，目录就读不下去了。
+ * 规则：按顺序找第一句长度 ≥ 8 的人话；都没有才退回第一句。
+ */
+const TITLE_FILLERS = /^(来|好|行|嗯|哦|要|去吧|继续|开始|可以|ok|okay|吃饭|睡觉)[。！？!?~～\s]*$/iu
+// 文件名 / 路径 / UUID 当标题很难看（"这个咩？session-10d841fa-…"）
+const TITLE_JUNK = /[\\/]|[0-9a-f]{8}-[0-9a-f]{4}|\.(mjs|js|cjs|json|md|zst|zstd|bak)\b/iu
+
+export function pickTitle(turns, { minLen = 8, maxLen = 40 } = {}) {
+  const lines = (Array.isArray(turns) ? turns : [])
+    .map((t) => String(t.user || '').split('\n')[0].trim())
+    .filter(Boolean)
+  for (const line of lines) {
+    const clean = line.replace(/\s+/g, ' ')
+    if (clean.length < minLen) continue
+    if (TITLE_FILLERS.test(clean)) continue
+    if (TITLE_JUNK.test(clean)) continue
+    return clean.slice(0, maxLen)
+  }
+  const first = lines[0] || ''
+  return first.slice(0, maxLen) || '(无标题)'
+}
+
+/**
  * Turn a slice of turns into one memory card.
  * Deliberately lossy: the card is an INDEX, the raw turns stay on disk.
  *
@@ -50,12 +75,11 @@ export function keywordsOf(text, limit = 8) {
  *   actions 用了哪些工具（从 tool/call 事件累积）
  *   outcome 最后落到哪（最后一条回答的首句）
  *   files   涉及的文件路径
- * 没有这些的时候，卡片就退化成"首句当标题"，至少不会更差。
  */
 export function makeCard(turns, { from = 0, to = 0, now = new Date() } = {}) {
   const list = Array.isArray(turns) ? turns : []
   const firstUser = list.find((t) => t.user)?.user || ''
-  const title = firstUser.split(/[。！？!?\n]/u)[0].trim().slice(0, 40) || '(无标题)'
+  const title = pickTitle(list)
   const points = list
     .map((t) => (t.user || '').split('\n')[0].trim())
     .filter(Boolean)

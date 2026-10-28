@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { makeCard, keywordsOf } from '../src/compact.js'
+import { makeCard, keywordsOf, pickTitle } from '../src/compact.js'
 import { recall, buildRecallBlock } from '../src/recall.js'
 
 const turns = [
@@ -66,4 +66,28 @@ test('card without tools degrades gracefully', () => {
   const card = makeCard([{ turn: 1, user: '闲聊', assistant: '好啊' }], { from: 1, to: 1 })
   assert.deepEqual(card.actions, [])
   assert.deepEqual(card.files, [])
+})
+
+test('title skips filler lines and picks the first meaningful one', () => {
+  const list = [
+    { turn: 1, user: '来吧' },
+    { turn: 2, user: '要' },
+    { turn: 3, user: '把那个 openEuler 的 bitmap 损坏问题记一下' },
+  ]
+  assert.equal(pickTitle(list), '把那个 openEuler 的 bitmap 损坏问题记一下')
+})
+
+test('title falls back to the first line when everything is short', () => {
+  assert.equal(pickTitle([{ turn: 1, user: '好' }]), '好')
+  assert.equal(pickTitle([]), '(无标题)')
+})
+
+test('title skips file names and paths', () => {
+  const list = [
+    { turn: 1, user: '这个咩？session-10d841fa-6514-4a8f-8bb2-6d4a3fe4' },
+    { turn: 2, user: '看看 D:\\Work\\Code\\FatFishsMemory 里的索引' },
+    { turn: 3, user: '记忆卡到底存在哪了' },
+  ]
+  const title = pickTitle(list)
+  assert.equal(title, '记忆卡到底存在哪了')
 })

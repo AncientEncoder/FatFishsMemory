@@ -27,6 +27,18 @@ test('catalog keeps only the newest N cards', () => {
   assert.ok(!text.includes('第 0 件'))
 })
 
+test('catalog drops titles too short to mean anything', () => {
+  const noisy = [
+    { date: '2026-10-26', title: '来吧' },
+    { date: '2026-10-26', title: '35米' },
+    { date: '2026-10-26', title: 'PD 分离在 2P2D 上为什么不赚' },
+  ]
+  const text = buildCatalog(noisy)
+  assert.ok(!text.includes('来吧'))
+  assert.ok(!text.includes('35米'))
+  assert.ok(text.includes('PD 分离'))
+})
+
 test('catalog can carry a "how to look it up" hint', () => {
   const cmd = 'node "/x/tools/recall.mjs" "关键词"'
   const text = buildCatalog(cards, { recallCommand: cmd })
